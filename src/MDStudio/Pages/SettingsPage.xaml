@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="MDStudio.Pages.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer
+        x:Name="SettingsScroller"
+        HorizontalScrollBarVisibility="Disabled"
+        HorizontalScrollMode="Disabled"
+        VerticalScrollBarVisibility="Auto">
+        <StackPanel
+            x:Name="SettingsBody"
+            MaxWidth="820"
+            Padding="24,8,24,24"
+            HorizontalAlignment="Left"
+            Spacing="16">
+
+            <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="设置" />
+
+            <!--  游戏  -->
+            <ContentControl Padding="20" Style="{StaticResource PanelCard}">
+                <StackPanel Spacing="16">
+                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="游戏" />
+
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="游戏目录" />
+                            <TextBox
+                                x:Name="DirBox"
+                                IsReadOnly="True"
+                                Text="读取中…" />
+                        </StackPanel>
+                        <Button
+                            Grid.Column="1"
+                            VerticalAlignment="Bottom"
+                            Click="PickDir_Click"
+                            Content="更改…" />
+                        <Button
+                            Grid.Column="2"
+                            VerticalAlignment="Bottom"
+                            Click="Detect_Click"
+                            Content="重新检测" />
+                    </Grid>
+
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="账号" />
+                            <ComboBox
+                                x:Name="AccountBox"
+                                HorizontalAlignment="Stretch"
+                                DisplayMemberPath="Label"
+                                SelectionChanged="AccountBox_SelectionChanged" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="备注名" />
+                            <TextBox x:Name="NameBox" PlaceholderText="比如 主号" />
+                        </StackPanel>
+                        <Button
+                            Grid.Column="2"
+                            VerticalAlignment="Bottom"
+                            Click="SaveName_Click"
+                            Content="保存备注" />
+                    </Grid>
+
+                    <TextBlock
+                        x:Name="GameHint"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="" />
+                </StackPanel>
+            </ContentControl>
+
+            <!--  运行 / 维护：左右分栏  -->
+            <ContentControl Padding="20" Style="{StaticResource PanelCard}">
+                <Grid
+                    x:Name="RunMaintGrid"
+                    ColumnSpacing="20"
+                    RowSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!--  左栏：运行  -->
+                    <StackPanel x:Name="LeftPanel" Spacing="12">
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="运行" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="预演模式" />
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="只看流程，不写游戏文件。本次运行有效。" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="DrySwitch"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Toggled="DrySwitch_Toggled" />
+                        </Grid>
+                    </StackPanel>
+
+                    <!--  分隔线  -->
+                    <Rectangle
+                        x:Name="RunMaintDivider"
+                        Grid.Column="1"
+                        Width="1"
+                        HorizontalAlignment="Center"
+                        Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
+
+                    <!--  右栏：维护  -->
+                    <StackPanel
+                        x:Name="RightPanel"
+                        Grid.Column="2"
+                        Spacing="12">
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="维护" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="游戏更新后重新同步" />
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="游戏更新会重建数据清单，你改过的召唤动画和发动特效会失效。同步会把它们按历史记录补回去。"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button
+                                x:Name="ResyncButton"
+                                Grid.Column="1"
+                                VerticalAlignment="Top"
+                                Click="Resync_Click"
+                                Content="重新同步"
+                                Style="{StaticResource AccentButtonStyle}" />
+                        </Grid>
+                        <StackPanel
+                            x:Name="ResyncBusy"
+                            Orientation="Horizontal"
+                            Spacing="10"
+                            Visibility="Collapsed">
+                            <ProgressRing
+                                x:Name="ResyncRing"
+                                Width="16"
+                                Height="16"
+                                IsActive="True" />
+                            <TextBlock
+                                x:Name="ResyncStatus"
+                                VerticalAlignment="Center"
+                                Text="准备中"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </ContentControl>
+
+            <!--  关于  -->
+            <ContentControl Padding="20" Style="{StaticResource PanelCard}">
+                <StackPanel Spacing="8">
+                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="关于" />
+                    <Grid ColumnSpacing="24" RowSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="版本" />
+                        <TextBlock
+                            x:Name="VersionText"
+                            Grid.Column="1"
+                            Text="—" />
+                        <TextBlock
+                            Grid.Row="1"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="日志目录" />
+                        <TextBlock
+                            x:Name="JournalText"
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            IsTextSelectionEnabled="True"
+                            Text="—"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Grid.Row="2"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="记录数" />
+                        <TextBlock
+                            x:Name="RecordsText"
+                            Grid.Row="2"
+                            Grid.Column="1"
+                            Text="—" />
+                    </Grid>
+                </StackPanel>
+            </ContentControl>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -1,0 +1,16 @@
+SpineSkeletonDataConverter
+==========================
+
+用途：把 Spine 3.x(3.5/3.6/3.7/3.8) 的骨架 JSON 升级成 4.2，游戏才能用。
+来源：https://github.com/wang606/SpineSkeletonDataConverter
+许可：PolyForm Noncommercial 1.0.0（仅限非商业用途，LICENSE.txt 不要删）
+
+用法（在 cmd 里）：
+    SpineSkeletonDataConverter.exe 输入.json 输出.json -v 4.2.11
+
+注意：
+1. 路径和文件名必须是英文或数字。含中文会报
+   "filesystem error: Cannot convert character sequence"。
+2. 只处理骨架 .json。图集 .atlas 和贴图 .png 保持原样，导入时工具会自动升级格式。
+3. 跨大版本会重算旋转时间轴和曲线，进游戏后请在单人模式里确认动作。
+4. SpineAtlasDowngrade.exe 是反方向用的（4.x 图集降回 3.x），这里一般用不到。

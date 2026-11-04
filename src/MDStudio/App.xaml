@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="MDStudio.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:MDStudio">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <!-- Other merged dictionaries here -->
+            </ResourceDictionary.MergedDictionaries>
+
+            <!--
+                面板底色保持原样（等于 LayerFillColorDefault 的观感），只是写成不透明：
+                投影层铺在面板下方，半透明底色会把黑底透上来，整块面板被染灰。
+                ThemeDictionaries 必须排在普通资源之前。
+            -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="PanelFillBrush" Color="#FCFCFC" />
+                    <!-- 分区描边：只加实边缘，不改底色 -->
+                    <SolidColorBrush x:Key="WellBorderBrush" Color="#D8D8D8" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="PanelFillBrush" Color="#2B2B2B" />
+                    <SolidColorBrush x:Key="WellBorderBrush" Color="#3F3F3F" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <!-- 选中态：底色只做轻微提亮，识别靠边框与左侧指示条；跟随系统强调色 -->
+            <SolidColorBrush x:Key="CardSelectedBackground" Color="{ThemeResource SystemAccentColor}" Opacity="0.09" />
+            <SolidColorBrush x:Key="CardSelectedBorder" Color="{ThemeResource SystemAccentColor}" />
+            <!-- Rectangle.Fill 要 Brush，直接给 SystemAccentColor（Color）不会生效 -->
+            <SolidColorBrush x:Key="CardSelectedIndicatorBrush" Color="{ThemeResource SystemAccentColor}" />
+            <!-- 离开选中态时用来复位，Storyboard 里给字符串 "Transparent" 不会自动转成 Brush -->
+            <SolidColorBrush x:Key="TransparentBrush" Color="Transparent" />
+            <!-- 面板描边：比默认 CardStroke 更实，拉开层次 -->
+            <SolidColorBrush x:Key="PanelBorderBrush" Color="{ThemeResource SystemBaseMediumLowColor}" />
+            <!-- 投影底色：纯黑，靠每层 Border 自己的 Opacity 做阶梯衰减 -->
+            <SolidColorBrush x:Key="ElevationShadowBrush" Color="Black" />
+            <!-- 导航选中底色：跟随系统强调色 -->
+            <SolidColorBrush x:Key="NavSelectedBackground" Color="{ThemeResource SystemAccentColor}" Opacity="0.14" />
+
+            <!--
+                带柔和投影的面板容器，外观与卡片页两个主面板一致：
+                不透明底 + 更实的描边 + 三层递减透明度模拟投影。
+                用法：<ContentControl Style="{StaticResource PanelCard}">内容</ContentControl>
+            -->
+            <Style x:Key="PanelCard" TargetType="ContentControl">
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                <Setter Property="Padding" Value="14" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ContentControl">
+                            <Grid>
+                                <Border
+                                    Margin="0,0,10,10"
+                                    Background="{ThemeResource ElevationShadowBrush}"
+                                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                    Opacity="0.025">
+                                    <Border.RenderTransform>
+                                        <TranslateTransform X="4" Y="6" />
+                                    </Border.RenderTransform>
+                                </Border>
+                                <Border
+                                    Margin="0,0,10,10"
+                                    Background="{ThemeResource ElevationShadowBrush}"
+                                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                    Opacity="0.04">
+                                    <Border.RenderTransform>
+                                        <TranslateTransform X="2.5" Y="4" />
+                                    </Border.RenderTransform>
+                                </Border>
+                                <Border
+                                    Margin="0,0,10,10"
+                                    Background="{ThemeResource ElevationShadowBrush}"
+                                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                    Opacity="0.055">
+                                    <Border.RenderTransform>
+                                        <TranslateTransform X="1" Y="2" />
+                                    </Border.RenderTransform>
+                                </Border>
+                                <Border
+                                    Margin="0,0,10,10"
+                                    Padding="{TemplateBinding Padding}"
+                                    Background="{ThemeResource PanelFillBrush}"
+                                    BorderBrush="{ThemeResource PanelBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{ThemeResource OverlayCornerRadius}">
+                                    <ContentPresenter
+                                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                        Content="{TemplateBinding Content}" />
+                                </Border>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

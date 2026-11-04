@@ -1,0 +1,80 @@
+# ===================== Python =====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+sdist/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+.pyenv/
+env/
+ENV/
+
+# ===================== .NET / WinUI 3 =====================
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userprefs
+*.cache
+*.pdb
+*.nupkg
+*.appx
+*.msix
+*.msixupload
+AppPackages/
+BundleArtifacts/
+Generated Files/
+
+# ===================== 构建产物 =====================
+dist/
+publish/
+out/
+*.zip
+
+# ===================== 本机数据：游戏路径、账号、历史记录 =====================
+# 这些由程序运行时生成，含本机路径与账号信息，绝不提交
+config/
+data/
+settings.json
+journal.json
+
+# ===================== 模型与第三方大文件 =====================
+# 抠像模型 176MB，超过 GitHub 单文件上限，运行时自动下载
+tools/matting/*.onnx
+*.onnx
+*.pth
+*.ckpt
+# realesrgan 自带的示例视频与测试图，超分引擎用不到
+tools/realesrgan/*.mp4
+tools/realesrgan/input*.jpg
+
+# ===================== WorkBuddy / 编辑器 =====================
+.workbuddy/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===================== 系统与临时文件 =====================
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.log
+*.tmp
+*.bak
+*.orig
+~$*
+# 边框素材的取色底本就叫 .orig.png，是随包资源，要保留
+!tools/overframe/*.orig.png

@@ -1,0 +1,889 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="MDStudio.Pages.CardArtPage"
+    NavigationCacheMode="Required"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:MDStudio.Controls"
+    xmlns:converters="using:MDStudio.Converters"
+    xmlns:models="using:MDStudio.Models"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Page.Resources>
+        <converters:StatusBrushConverter x:Key="StatusBrush" />
+        <DataTemplate x:Key="CardRow" x:DataType="models:CardItem">
+            <Grid Padding="12,8" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2">
+                    <TextBlock
+                        MaxLines="1"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        Text="{x:Bind Title}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="{x:Bind SubText}" />
+                </StackPanel>
+                <!--  右侧三个状态标签：占位卡固定用警示色，两种超框按类别取色  -->
+                <StackPanel
+                    Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="6"
+                    VerticalAlignment="Center">
+                    <TextBlock
+                        FontSize="11"
+                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                        Text="占位卡"
+                        Visibility="{x:Bind PlaceholderTagVisibility}" />
+                    <TextBlock
+                        FontSize="11"
+                        Foreground="{ThemeResource SystemFillColorAttentionBrush}"
+                        Text="未上线"
+                        Visibility="{x:Bind UnreleasedVisibility}" />
+                    <TextBlock
+                        FontSize="11"
+                        Foreground="{x:Bind KindOfficialArt, Converter={StaticResource StatusBrush}}"
+                        Text="官方超框"
+                        Visibility="{x:Bind OfficialArtVisibility}" />
+                    <TextBlock
+                        FontSize="11"
+                        Foreground="{x:Bind KindOurArt, Converter={StaticResource StatusBrush}}"
+                        Text="自改超框"
+                        Visibility="{x:Bind OurArtVisibility}" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+    </Page.Resources>
+
+    <Grid Padding="24,8,24,24" ColumnSpacing="12" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="340" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!--  左：卡片列表（PanelCard 模板已含 10px 投影边距，别再加 Margin，否则比右栏小一圈）  -->
+        <ContentControl
+            Grid.Row="0"
+            Style="{StaticResource PanelCard}">
+            <Grid RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBox
+                    x:Name="SearchBox"
+                    PlaceholderText="搜索卡名或编号"
+                    TextChanged="SearchBox_TextChanged"
+                    />
+
+                <TextBlock
+                    x:Name="EmptyHint"
+                    Grid.Row="1"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Text="没有符合条件的卡"
+                    Visibility="Collapsed" />
+
+                <!--  右侧留 16 给浮层式滚动条，否则选中框右边会被压住  -->
+                <ListView
+                    x:Name="CardList"
+                    Grid.Row="1"
+                    Padding="0,0,16,0"
+                                                                                SelectionChanged="CardList_SelectionChanged"
+                    ItemTemplate="{StaticResource CardRow}"
+                                                                
+                    SelectionMode="Single">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0,1" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListViewItem">
+                                        <Grid x:Name="RootGrid">
+                                            <VisualStateManager.VisualStateGroups>
+                                                <VisualStateGroup x:Name="CommonStates">
+                                                    <!--  六个状态都要写全 背景/边框/指示条，留空会残留上一态的值  -->
+                                                    <VisualState x:Name="Normal">
+                                                        <Storyboard>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="Background">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource TransparentBrush}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="BorderBrush">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource TransparentBrush}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Indicator" Storyboard.TargetProperty="Opacity">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="0" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                        </Storyboard>
+                                                    </VisualState>
+                                                    <VisualState x:Name="PointerOver">
+                                                        <Storyboard>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="Background">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="BorderBrush">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource TransparentBrush}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Indicator" Storyboard.TargetProperty="Opacity">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="0" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                        </Storyboard>
+                                                    </VisualState>
+                                                    <VisualState x:Name="Pressed">
+                                                        <Storyboard>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="Background">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SubtleFillColorTertiaryBrush}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="BorderBrush">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource TransparentBrush}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Indicator" Storyboard.TargetProperty="Opacity">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="0" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                        </Storyboard>
+                                                    </VisualState>
+                                                    <!--  真实状态名是 PointerOverSelected / PressedSelected  -->
+                                                    <VisualState x:Name="Selected">
+                                                        <Storyboard>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="Background">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource CardSelectedBackground}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="BorderBrush">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource CardSelectedBorder}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Indicator" Storyboard.TargetProperty="Opacity">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="1" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                        </Storyboard>
+                                                    </VisualState>
+                                                    <VisualState x:Name="PointerOverSelected">
+                                                        <Storyboard>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="Background">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource CardSelectedBackground}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="BorderBrush">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource CardSelectedBorder}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Indicator" Storyboard.TargetProperty="Opacity">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="1" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                        </Storyboard>
+                                                    </VisualState>
+                                                    <VisualState x:Name="PressedSelected">
+                                                        <Storyboard>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="Background">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource CardSelectedBackground}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SelectionBorder" Storyboard.TargetProperty="BorderBrush">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource CardSelectedBorder}" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Indicator" Storyboard.TargetProperty="Opacity">
+                                                                <DiscreteObjectKeyFrame KeyTime="0" Value="1" />
+                                                            </ObjectAnimationUsingKeyFrames>
+                                                        </Storyboard>
+                                                    </VisualState>
+                                                </VisualStateGroup>
+                                            </VisualStateManager.VisualStateGroups>
+                                            <Border
+                                                x:Name="SelectionBorder"
+                                                Background="Transparent"
+                                                BorderBrush="Transparent"
+                                                BorderThickness="1"
+                                                CornerRadius="6">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="3" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Rectangle
+                                                        x:Name="Indicator"
+                                                        Grid.Column="0"
+                                                        Fill="{ThemeResource CardSelectedIndicatorBrush}"
+                                                        Opacity="0" />
+                                                    <ContentPresenter
+                                                        Grid.Column="1"
+                                                        Margin="{TemplateBinding Padding}"
+                                                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                        Content="{TemplateBinding Content}"
+                                                        ContentTemplate="{TemplateBinding ContentTemplate}" />
+                                                </Grid>
+                                            </Border>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                </ListView>
+
+                <TextBlock
+                    x:Name="CountText"
+                    Grid.Row="2"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    TextTrimming="CharacterEllipsis" />
+            </Grid>
+        </ContentControl>
+
+        <!--  右：工作台  -->
+        <ContentControl
+            Grid.Row="0"
+            Grid.Column="1"
+            Padding="18"
+            Style="{StaticResource PanelCard}">
+            <!--  右侧：卡片信息头 + 页签（超框 / Rush Duel）+ 内容  -->
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!--  第一行：卡片信息（卡名 + 卡号）  -->
+                <!--  卡名 + 卡号一行：卡号用小字贴在名字右侧  -->
+                <StackPanel
+                    Grid.Row="0"
+                    Margin="0,0,0,4"
+                    Orientation="Horizontal"
+                    Spacing="10">
+                    <TextBlock
+                        x:Name="CardName"
+                        IsTextSelectionEnabled="True"
+                        Style="{StaticResource TitleTextBlockStyle}"
+                        Text="选一张卡"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        x:Name="CardMeta"
+                        VerticalAlignment="Bottom"
+                        FontSize="13"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource BodyTextBlockStyle}"
+                        Text="" />
+                </StackPanel>
+
+                <!--  第二行：切换选项卡（超框 / Rush Duel），样式对齐动画页  -->
+                <SelectorBar
+                    x:Name="SectionBar"
+                    Grid.Row="1"
+                    Margin="0,4,0,8"
+                    SelectionChanged="SectionBar_SelectionChanged">
+                    <SelectorBar.Resources>
+                        <SolidColorBrush x:Key="SelectorBarItemForegroundSelected" Color="{ThemeResource SystemAccentColor}" />
+                        <SolidColorBrush x:Key="SelectorBarItemPillFill" Color="{ThemeResource SystemAccentColor}" />
+                    </SelectorBar.Resources>
+                    <SelectorBarItem
+                        x:Name="OverframeTab"
+                        IsSelected="True"
+                        Tag="overframe"
+                        Text="超框" />
+                    <SelectorBarItem
+                        x:Name="RdTab"
+                        Tag="rushduel"
+                        Text="Rush Duel" />
+                </SelectorBar>
+
+                <!--  超框工作台：预览 + 参数，限一个最大宽度，窄窗口下按比例收缩  -->
+                <Grid x:Name="OverframeSection" Grid.Row="2">
+                <Grid
+                    x:Name="OfPanel"
+                    MaxWidth="860"
+                    ColumnSpacing="26"
+                    HorizontalAlignment="Stretch">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                <!--  预览：宽度固定 288，卡片按 704:1024 等比缩放到这个宽度里，
+                      线框跟着卡片走，不随窗口高度变化  -->
+                <Grid
+                    x:Name="PreviewHost"
+                    Width="288"
+                    RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid>
+                        <Viewbox Stretch="Uniform">
+                            <!--  细线贴着卡片走：线框包着画布，跟着 704:1024 一起缩放，
+                                  不再随面板高度拉伸。厚度按设计像素给（300 宽下约 1.3px）  -->
+                            <!--  圆角取卡图实测的 26（卡图坐标），细线厚度 3，所以外角给 29，
+                                  内边正好裁在 26，卡图和细线一起走圆角  -->
+                            <Border
+                                Background="Transparent"
+                                BorderBrush="{ThemeResource TextFillColorSecondaryBrush}"
+                                BorderThickness="3"
+                                CornerRadius="29">
+                                <Canvas
+                                    x:Name="CardCanvas"
+                                    Width="704"
+                                    Height="1024"
+                                    Background="Transparent"
+                                    PointerCaptureLost="CardCanvas_PointerCaptureLost"
+                                    PointerMoved="CardCanvas_PointerMoved"
+                                    PointerPressed="CardCanvas_PointerPressed"
+                                    PointerReleased="CardCanvas_PointerReleased">
+                                    <!--  背景卡图：Cover 填满插图窗  -->
+                                    <Rectangle
+                                        x:Name="ArtRect"
+                                        Width="527"
+                                        Height="528"
+                                        IsHitTestVisible="False">
+                                        <Rectangle.Fill>
+                                            <ImageBrush x:Name="ArtBrush" Stretch="UniformToFill" />
+                                        </Rectangle.Fill>
+                                    </Rectangle>
+                                    <!--  卡框：棱彩用配色框，其余用原生框  -->
+                                    <Image
+                                        x:Name="FrameImg"
+                                        Width="704"
+                                        Height="1024"
+                                        IsHitTestVisible="False" />
+                                    <!--  虹彩：整圈艳彩虹  -->
+                                    <Image
+                                        x:Name="BorderRainbowImg"
+                                        Width="704"
+                                        Height="1024"
+                                        IsHitTestVisible="False"
+                                        Visibility="Collapsed" />
+                                    <!--  幻彩：柔和淡彩环带  -->
+                                    <Image
+                                        x:Name="BorderGloryImg"
+                                        Width="704"
+                                        Height="1024"
+                                        IsHitTestVisible="False"
+                                        Visibility="Collapsed" />
+                                    <!--  官方：还原官方超框  -->
+                                    <Image
+                                        x:Name="BorderOfficialImg"
+                                        Width="704"
+                                        Height="1024"
+                                        IsHitTestVisible="False"
+                                        Visibility="Collapsed" />
+                                    <!--  连接箭头：未点亮层压在主体下面，会被主体盖住  -->
+                                    <Image
+                                        x:Name="LinkDimImg"
+                                        Width="704"
+                                        Height="1024"
+                                        IsHitTestVisible="False"
+                                        Opacity="1" />
+                                    <!--  主体：放大冲框，不压效果栏；可鼠标拖动  -->
+                                    <Canvas
+                                        x:Name="SubjectLayer"
+                                        Width="704"
+                                        Height="1024"
+                                        IsHitTestVisible="False">
+                                        <Canvas.Clip>
+                                            <RectangleGeometry Rect="0,0,704,1024" />
+                                        </Canvas.Clip>
+                                        <Image x:Name="SubjectImg" IsHitTestVisible="False" />
+                                    </Canvas>
+                                    <!--  连接箭头点亮层在主之上  -->
+                                    <Image
+                                        x:Name="LinkLitImg"
+                                        Width="704"
+                                        Height="1024"
+                                        IsHitTestVisible="False" />
+                                    <!--  效果框：单独压主体之上，透明度可调  -->
+                                    <Image
+                                        x:Name="LoreImg"
+                                        Width="704"
+                                        Height="1024"
+                                        IsHitTestVisible="False"
+                                        Opacity="1" />
+                                </Canvas>
+                            </Border>
+                        </Viewbox>
+                        <TextBlock
+                            x:Name="PreviewHint"
+                            Margin="16"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text="选一张卡"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </Grid>
+
+                    <TextBlock
+                        x:Name="PreviewCaption"
+                        Grid.Row="1"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap" />
+                </Grid>
+
+                <!--  参数：一个两列网格，第 0 列放控件、第 1 列放按钮与读数，
+                      四行的左右边缘因此完全对齐  -->
+                <ScrollViewer
+                    Grid.Column="1"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                    <!--  参数自成一块：浅底圆角、宽高都跟着可用空间走-->
+                    <Border
+                        MaxWidth="546"
+                        Padding="16"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Top"
+                        Background="{ThemeResource LayerFillColorAltBrush}"
+                        BorderBrush="{ThemeResource WellBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="88" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!--  卡图背景  -->
+                            <TextBlock
+                                Grid.Row="0"
+                                Grid.ColumnSpan="2"
+                                Margin="0,0,0,6"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="卡图背景（填满插图窗）"
+                                ToolTipService.ToolTip="卡图会填满插图窗；主体放大后会跨出框线，压在最上层。" />
+                            <TextBox
+                                x:Name="FrameArtBox"
+                                Grid.Row="2"
+                                IsReadOnly="True"
+                                PlaceholderText="不选就用游戏当前卡图" />
+                            <Button
+                                Grid.Row="2"
+                                Grid.Column="1"
+                                HorizontalAlignment="Stretch"
+                                Click="PickFrameArt_Click"
+                                Content="选择…" />
+
+                            <!--  主体  -->
+                            <TextBlock
+                                Grid.Row="3"
+                                Grid.ColumnSpan="2"
+                                Margin="0,18,0,6"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="主体（推荐带透明通道的 PNG）"
+                                ToolTipService.ToolTip="没有透明通道的图片会整块盖住卡片；不选主体就没有出框效果。" />
+                            <TextBox
+                                x:Name="SubjectBox"
+                                Grid.Row="4"
+                                IsReadOnly="True"
+                                PlaceholderText="不给就没有出框" />
+                            <Button
+                                Grid.Row="4"
+                                Grid.Column="1"
+                                HorizontalAlignment="Stretch"
+                                Click="PickSubject_Click"
+                                Content="选择…" />
+
+                            <!--  边框效果  -->
+                            <TextBlock
+                                Grid.Row="5"
+                                Grid.ColumnSpan="2"
+                                Margin="0,18,0,6"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="边框效果" />
+                            <controls:WheelSafeComboBox
+                                x:Name="EffectBox"
+                                Grid.Row="6"
+                                Grid.ColumnSpan="2"
+                                HorizontalAlignment="Stretch"
+                                SelectionChanged="EffectBox_SelectionChanged"
+                                />
+
+                            <!--  主体大小  -->
+                            <TextBlock
+                                Grid.Row="7"
+                                Grid.ColumnSpan="2"
+                                Margin="0,18,0,6"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="主体大小" />
+                            <Slider
+                                x:Name="SubjectScaleSlider"
+                                Grid.Row="8"
+                                Grid.Column="0"
+                                HorizontalAlignment="Stretch"
+                                IsThumbToolTipEnabled="False"
+                                Maximum="3"
+                                Minimum="0.5"
+                                StepFrequency="0.1"
+                                Value="1"
+                                ValueChanged="Tune_ValueChanged"
+                                />
+                            <TextBlock
+                                x:Name="ScaleText"
+                                Grid.Row="8"
+                                Grid.Column="1"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="1.0×" />
+
+                            <!--  效果框透明度  -->
+                            <TextBlock
+                                Grid.Row="9"
+                                Grid.ColumnSpan="2"
+                                Margin="0,18,0,6"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="效果框透明度" />
+                            <Slider
+                                x:Name="LoreAlphaSlider"
+                                Grid.Row="10"
+                                Grid.Column="0"
+                                HorizontalAlignment="Stretch"
+                                IsThumbToolTipEnabled="False"
+                                Maximum="1"
+                                Minimum="0.2"
+                                StepFrequency="0.01"
+                                Value="1"
+                                ValueChanged="LoreAlpha_ValueChanged"
+                                />
+                            <TextBlock
+                                x:Name="LoreText"
+                                Grid.Row="10"
+                                Grid.Column="1"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="100%" />
+
+                            <StackPanel
+                                Grid.Row="11"
+                                Grid.ColumnSpan="2"
+                                Margin="0,16,0,0"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <Button
+                                    x:Name="ApplyBtn"
+                                                          Click="ApplyBtn_Click"
+                                    Content="写入游戏"
+                                    IsEnabled="False"
+                                    Style="{StaticResource AccentButtonStyle}" />
+                                <Button
+                                    x:Name="RevertBtn"
+                                                           Click="RevertBtn_Click"
+                                    Content="撤回这张卡的超框"
+                                    IsEnabled="False" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </ScrollViewer>
+                </Grid>
+                </Grid>
+
+                <!--  Rush Duel 工作台：整卡版式，名字/攻防/效果文字画进贴图  -->
+                <Grid
+                    x:Name="RdPanel"
+                    Grid.Row="2"
+                    Visibility="Collapsed"
+                    MaxWidth="860"
+                    ColumnSpacing="26"
+                    HorizontalAlignment="Stretch">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!--  预览：合成结果是一张整卡 PNG，直接显示  -->
+                    <Grid x:Name="RdPreviewHost" Width="288" RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid>
+                            <Viewbox Stretch="Uniform">
+                                <Border
+                                    Background="Transparent"
+                                    BorderBrush="{ThemeResource TextFillColorSecondaryBrush}"
+                                    BorderThickness="3"
+                                    CornerRadius="29">
+                                    <Grid
+                                        Width="704"
+                                        Height="1024"
+                                        Background="Transparent"
+                                        PointerCaptureLost="RdCard_PointerCaptureLost"
+                                        PointerMoved="RdCard_PointerMoved"
+                                        PointerPressed="RdCard_PointerPressed"
+                                        PointerReleased="RdCard_PointerReleased">
+                                        <Canvas Width="704" Height="1024">
+                                            <Canvas.Clip>
+                                                <RectangleGeometry Rect="0,0,704,1024" />
+                                            </Canvas.Clip>
+                                            <Image x:Name="RdBaseImg" Width="704" Height="1024" />
+                                            <Image
+                                                x:Name="RdSubjImg"
+                                                IsHitTestVisible="False"
+                                                Visibility="Collapsed" />
+                                            <Image
+                                                x:Name="RdPanelImg"
+                                                Width="704"
+                                                Height="1024"
+                                                IsHitTestVisible="False" />
+                                            <Image
+                                                x:Name="RdInfoImg"
+                                                Width="704"
+                                                Height="1024"
+                                                IsHitTestVisible="False" />
+                                        </Canvas>
+                                    </Grid>
+                                </Border>
+                            </Viewbox>
+                            <TextBlock
+                                x:Name="RdHint"
+                                Margin="16"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="选一张卡"
+                                TextAlignment="Center"
+                                TextWrapping="Wrap" />
+                        </Grid>
+                        <TextBlock
+                            x:Name="RdCaption"
+                            Grid.Row="1"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </Grid>
+
+                    <ScrollViewer
+                        Grid.Column="1"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+                        <Border
+                            MaxWidth="546"
+                            Padding="16"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Top"
+                            Background="{ThemeResource LayerFillColorAltBrush}"
+                            BorderBrush="{ThemeResource WellBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="88" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock
+                                    Grid.Row="0"
+                                    Grid.ColumnSpan="2"
+                                    Margin="0,0,0,6"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="卡图背景（填满插图窗）"
+                                    ToolTipService.ToolTip="RD 版式的插图窗比原生大，原版卡图直接用会留黑边；选一张大图做背景即可铺满。" />
+                                <TextBox
+                                    x:Name="RdArtBox"
+                                    Grid.Row="1"
+                                    IsReadOnly="True"
+                                    PlaceholderText="不选就用游戏当前卡图" />
+                                <Button
+                                    Grid.Row="1"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Stretch"
+                                    Click="RdPickArt_Click"
+                                    Content="选择…" />
+
+                                <TextBlock
+                                    Grid.Row="2"
+                                    Grid.ColumnSpan="2"
+                                    Margin="0,18,0,6"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="主体（推荐带透明通道的 PNG）"
+                                    ToolTipService.ToolTip="主体会放大压上、可以跨出框线；不选就没有出框效果。" />
+                                <TextBox
+                                    x:Name="RdSubjectBox"
+                                    Grid.Row="3"
+                                    IsReadOnly="True"
+                                    PlaceholderText="不给就没有出框" />
+                                <Button
+                                    Grid.Row="3"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Stretch"
+                                    Click="RdPickSubject_Click"
+                                    Content="选择…" />
+
+                                <!--  边框效果：与超框同一套素材与配色  -->
+                                <TextBlock
+                                    Grid.Row="4"
+                                    Grid.ColumnSpan="2"
+                                    Margin="0,18,0,6"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="边框效果" />
+                                <controls:WheelSafeComboBox
+                                    x:Name="RdEffectBox"
+                                    Grid.Row="5"
+                                    Grid.ColumnSpan="2"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="RdEffectBox_SelectionChanged" />
+
+                                <TextBlock
+                                    Grid.Row="6"
+                                    Grid.ColumnSpan="2"
+                                    Margin="0,18,0,6"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="主体大小" />
+                                <Slider
+                                    x:Name="RdScaleSlider"
+                                    Grid.Row="7"
+                                    Grid.Column="0"
+                                    HorizontalAlignment="Stretch"
+                                    IsThumbToolTipEnabled="False"
+                                    Maximum="3"
+                                    Minimum="0.5"
+                                    StepFrequency="0.1"
+                                    Value="1"
+                                    ValueChanged="RdScale_ValueChanged" />
+                                <TextBlock
+                                    x:Name="RdScaleText"
+                                    Grid.Row="7"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="1.0×" />
+
+                                <!--  效果框透明度：只影响下方那一块，主体从框里透出来  -->
+                                <TextBlock
+                                    Grid.Row="8"
+                                    Grid.ColumnSpan="2"
+                                    Margin="0,18,0,6"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="效果框透明度"
+                                    ToolTipService.ToolTip="调低后效果框变透明，被它压住的主体从框里透出来；卡名、攻防、星级、属性与文字始终不透明。" />
+                                <Slider
+                                    x:Name="RdAlphaSlider"
+                                    Grid.Row="9"
+                                    Grid.Column="0"
+                                    HorizontalAlignment="Stretch"
+                                    IsThumbToolTipEnabled="False"
+                                    Maximum="1"
+                                    Minimum="0.2"
+                                    StepFrequency="0.01"
+                                    Value="1"
+                                    ValueChanged="RdAlpha_ValueChanged" />
+                                <TextBlock
+                                    x:Name="RdAlphaText"
+                                    Grid.Row="9"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="100%" />
+
+                                <StackPanel
+                                    Grid.Row="10"
+                                    Grid.ColumnSpan="2"
+                                    Margin="0,16,0,0"
+                                    Orientation="Horizontal"
+                                    Spacing="8">
+                                    <Button
+                                        x:Name="RdApplyBtn"
+                                        Click="RdApplyBtn_Click"
+                                        Content="写入游戏"
+                                        IsEnabled="False"
+                                        Style="{StaticResource AccentButtonStyle}" />
+                                    <Button
+                                        x:Name="RdRevertBtn"
+                                        Click="RdRevertBtn_Click"
+                                        Content="撤回这张卡的 RD 卡图"
+                                        IsEnabled="False" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+        </ContentControl>
+
+        <!--  忙碌遮罩：写入 / 撤回期间挡住整页操作，左侧导航在窗口壳里，不受影响  -->
+        <Grid
+            x:Name="BusyOverlay"
+            Grid.Row="0"
+            Grid.ColumnSpan="2"
+            Background="Transparent"
+            Visibility="Collapsed">
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Opacity="0.7" />
+            <ProgressRing
+                Width="36"
+                Height="36"
+                HorizontalAlignment="Center"
+                IsActive="True"
+                VerticalAlignment="Center" />
+        </Grid>
+
+        <!--  底部状态  -->
+        <StackPanel
+            x:Name="StatusStrip"
+            Grid.Row="1"
+            Grid.ColumnSpan="2"
+            Padding="20,8,20,12"
+            Spacing="6"
+            Visibility="Collapsed">
+            <ProgressBar
+                x:Name="Progress"
+                Height="2"
+                Visibility="Collapsed" />
+            <TextBlock
+                x:Name="StatusText"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Style="{StaticResource CaptionTextBlockStyle}" />
+        </StackPanel>
+    </Grid>
+</Page>
+
