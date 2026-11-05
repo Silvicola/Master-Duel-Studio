@@ -256,6 +256,13 @@ class Backend:
             if isinstance(src, int) and src:
                 # donor 记的是卡号, 界面上带上名字好看些
                 src = f"{src} {db.name(src)}".strip()
+            # 历史页要的明细: 只挑列表里用得上的几项. sha 不传(那是每个文件一份指纹,
+            # 十几条就上百 KB), 只给个数, 界面上显示"改了几个文件".
+            detail = {k: r.meta[k] for k in ("source", "label", "path", "kinds")
+                      if k in r.meta}
+            sha = r.meta.get("sha")
+            if isinstance(sha, dict):
+                detail["files"] = len(sha)
             recs.append({
                 "id": r.id,
                 "op": r.op,
@@ -269,6 +276,7 @@ class Backend:
                 # 整合包条目带卡数, 历史里直接显示"导出 2 张卡"
                 "cards": r.meta.get("cards"),
                 "total": r.meta.get("total"),
+                "detail": detail,
             })
         recs.reverse()
         return {"records": recs, "count": len(recs)}
@@ -449,32 +457,7 @@ class Backend:
                 "overframe": meta["overframe"]}
 
     # ------------------------------------------------------------------ Rush Duel
-    def rushduel_info(self, card: int) -> dict:
-        """RD 卡片页要显示的东西：卡名、攻防、效果文本，以及能不能画等级。
 
-        等级游戏本地没有数据（CARD_Prop / ScriptableObjects 里都没有），
-        所以 level 恒为 None，界面据此把那一格留空。
-        """
-        from mdstudio.ops import rushduel as RD
-
-        return RD.card_info(self._ctx(), int(card))
-
-    def rushduel_preview(self, card: int, art=None, subject=None,
-                         scale=1.0, dx=0, dy=0, effect="", frame_alpha=1.0) -> dict:
-        """只出图，不碰游戏文件。"""
-        from mdstudio.ops import rushduel as RD
-
-        ctx = self._ctx()
-        info = RD.card_info(ctx, int(card))
-        if art is None:
-            art = self._base_art_cached(ctx, int(card))
-        out = RD.compose(int(card), art=art, name=info["name"], atk=info["atk"],
-                         dfn=info["def"], level=info["level"], desc=info["desc"],
-                         category=info["category"], attribute_en=info["attribute_en"],
-                         race_en=info["race_en"], pendulum_scale=info["scale"],
-                         subject=subject, scale=scale, dx=dx, dy=dy, effect=effect,
-                         frame_alpha=frame_alpha)
-        return {"path": str(out), "info": info}
 
     def _base_art_cached(self, ctx, card: int) -> str:
         """兜底卡图（游戏当前插图）解一次就缓存，拖动主体时不再反复读游戏文件。"""
@@ -491,54 +474,12 @@ class Backend:
         cache[card] = p
         return p
 
-    def rushduel_layers(self, card: int, art=None, subject=None, scale=1.0,
-                        effect="", frame_alpha=1.0) -> dict:
-        """预览分层：底图 / 主体 / 信息层。主体由前端本地平移，拖动零延迟。"""
-        from mdstudio.ops import rushduel as RD
 
-        ctx = self._ctx()
-        info = RD.card_info(ctx, int(card))
-        if art is None:
-            art = self._base_art_cached(ctx, int(card))
-        out = RD.layers(int(card), art=art, name=info["name"], atk=info["atk"],
-                        dfn=info["def"], level=info["level"], desc=info["desc"],
-                        category=info["category"], attribute_en=info["attribute_en"],
-                        race_en=info["race_en"], pendulum_scale=info["scale"],
-                        subject=subject, scale=scale, effect=effect,
-                        frame_alpha=frame_alpha)
-        out["name"] = info["name"]
-        out["atk"] = info["atk"]
-        out["def"] = info["def"]
-        return out
 
-    def rushduel_status(self, card: int) -> dict:
-        from mdstudio.ops import rushduel as RD
-
-        return RD.status(self._ctx(), int(card))
-
-    def rushduel_edit(self, card: int) -> dict:
-        """这张卡上次写入用的素材与参数，给界面还原用。"""
-        from mdstudio.ops import rushduel as RD
-
-        return RD.load_edit(int(card))
 
     # ------------------------------------------------------------------ 全局外观
-    def appearance_status(self) -> dict:
-        """RD 主题当前是否生效、备份在哪。"""
-        from mdstudio.ops import appearance as AP
 
-        return AP.status(self._ctx().game)
 
-    def appearance_plan(self) -> dict:
-        """扫描 data.unity3d，报出会被替换的纹理清单（只读）。"""
-        from mdstudio.ops import appearance as AP
-
-        return AP.plan(self._ctx().game)
-
-    def appearance_preview(self, art=None) -> dict:
-        from mdstudio.ops import appearance as AP
-
-        return {"path": str(AP.preview(art=art))}
 
     # ------------------------------------------------------------------ 壁纸
     def wallpaper_status(self) -> dict:
@@ -621,21 +562,6 @@ QUERY = {
                              scale=scale, dx=dx, dy=dy, lore_alpha=lore_alpha,
                              effect=effect, holo_scope=holo_scope),
     "overframe.layout": lambda be, card, **kw: be.overframe_layout(card),
-    "rushduel.info": lambda be, card, **kw: be.rushduel_info(card),
-    "rushduel.preview": lambda be, card, art=None, subject=None,
-        scale=1.0, dx=0, dy=0, effect="", frame_alpha=1.0, **kw:
-        be.rushduel_preview(card, art=art, subject=subject,
-                            scale=scale, dx=dx, dy=dy, effect=effect,
-                            frame_alpha=frame_alpha),
-    "rushduel.layers": lambda be, card, art=None, subject=None,
-        scale=1.0, effect="", frame_alpha=1.0, **kw:
-        be.rushduel_layers(card, art=art, subject=subject,
-                           scale=scale, effect=effect, frame_alpha=frame_alpha),
-    "rushduel.status": lambda be, card, **kw: be.rushduel_status(card),
-    "rushduel.edit": lambda be, card, **kw: be.rushduel_edit(card),
-    "appearance.status": lambda be, **kw: be.appearance_status(),
-    "appearance.plan": lambda be, **kw: be.appearance_plan(),
-    "appearance.preview": lambda be, art=None, **kw: be.appearance_preview(art=art),
     "wallpaper.status": lambda be, **kw: be.wallpaper_status(),
     "wallpaper.preview": lambda be, which="lobby", **kw: be.wallpaper_preview(which),
     "wallpaper.previews": lambda be, which="shop", **kw: be.wallpaper_previews(which),

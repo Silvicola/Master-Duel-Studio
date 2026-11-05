@@ -1034,6 +1034,9 @@ ZH: dict[str, str] = {
     "no texture in %s": "%s 里没有贴图",
     "no texture in the artwork bundle": "卡图 bundle 里没有贴图",
     "over-frame gate bundle not found under %s": "在 %s 下找不到超框登记表 bundle",
+    "card art %s: re-registered as over-frame": "卡图 %s：已重新登记为超框",
+    "card art registration not restored: %s": "卡图登记没能补回：%s",
+    "over-frame table: restored %s official entries": "超框登记表：补回 %s 条官方条目",
     "spine version converter not found at %s": "找不到 Spine 版本转换器：%s",
     "spine version upgrade failed (exit %s): %s": "Spine 版本升级失败（退出码 %s）：%s",
 }

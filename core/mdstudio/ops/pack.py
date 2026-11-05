@@ -53,6 +53,14 @@ def _illust(card) -> str:
     return OF.illust_logical(card)
 
 
+def _count_kinds(entries) -> dict:
+    """按类型数卡: {"cutin": 2, "art": 1}。同一张卡的同类条目只算一次。"""
+    seen = {}
+    for e in entries:
+        seen.setdefault(e.get("kind"), set()).add(e.get("mrk"))
+    return {k: len(v) for k, v in seen.items() if k}
+
+
 def exportable(journal) -> dict:
     """{card: {"cutin", "runfx", "art"}}"""
     out = {}
@@ -152,6 +160,8 @@ def export(ctx, cards, out_path, name="my-pack", zip_it=True) -> Path:
         rec.meta = {
             "pack": name,
             "cards": len({e["mrk"] for e in entries}),
+            # 按类型分开记: 一张卡可能同时带动画和卡图, 历史里要看得出各几份
+            "kinds": _count_kinds(entries),
             "path": str(final),
             "noop": True,
         }
@@ -223,8 +233,10 @@ def install(ctx, pack_path, skip_existing=True, replace=False) -> list:
             rec = Record("pack.install", 0)
             rec.meta = {
                 "pack": meta.get("name"),
-                "cards": len(done),
+                # 按卡去重: 一张卡可能同时装了动画和卡图, 条目数会虚高一倍
+                "cards": len({m for _, m in done}),
                 "total": len({c.get("mrk") for c in (meta.get("cards") or [])}),
+                "kinds": _count_kinds([{"kind": k, "mrk": m} for k, m in done]),
                 "noop": True,
             }
             ctx.journal.commit(rec)

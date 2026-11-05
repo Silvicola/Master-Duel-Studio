@@ -37,7 +37,10 @@
                 SelectionMode="Single">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="models:HistoryItem">
-                        <Grid Padding="0,6" ColumnSpacing="16">
+                        <Grid
+                            Padding="0,6"
+                            ColumnSpacing="16"
+                            ToolTipService.ToolTip="{x:Bind Tip}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="130" />
                                 <ColumnDefinition Width="150" />

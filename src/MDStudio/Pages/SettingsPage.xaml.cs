@@ -229,6 +229,9 @@ public sealed partial class SettingsPage : Page
         var fixes = Int(r, "catalog");
         var moved = Strings(r, "moved").Count;
         var lost = Strings(r, "lost_files");
+        // 卡图登记表的两类修复：我们自己的卡重新登记，以及游戏更新后缺的官方条目
+        var art = Strings(r, "overframe").Count;
+        var gateAdded = Int(r, "gate_added");
 
         // broken 的键是卡号，值是缺的依赖名。按卡聚起来才是用户能看懂的单位，
         // 逐个文件报 88 条 hash 路径没人看得下去。
@@ -236,14 +239,22 @@ public sealed partial class SettingsPage : Page
         if (r.TryGetProperty("broken", out var b) && b.ValueKind == JsonValueKind.Object)
             broken.AddRange(b.EnumerateObject().Select(p => p.Name));
 
-        if (cutins.Count == 0 && fx.Count == 0 && fixes == 0 && moved == 0 && lost.Count == 0)
+        if (cutins.Count == 0 && fx.Count == 0 && fixes == 0 && moved == 0
+            && lost.Count == 0 && art == 0 && gateAdded == 0)
         {
             ResyncStatus.Text = "没有需要补的，游戏清单和历史现在一致。";
             return;
         }
 
-        var head = $"补回召唤动画 {cutins.Count} 处、发动特效 {fx.Count} 处，修订清单 {fixes} 项";
-        if (moved > 0) head += $"，搬移文件 {moved} 个";
+        // 只报真正修了的项，避免"补回召唤动画 0 处、发动特效 0 处"这种话
+        var parts = new List<string>();
+        if (cutins.Count > 0) parts.Add($"补回召唤动画 {cutins.Count} 处");
+        if (fx.Count > 0) parts.Add($"补回发动特效 {fx.Count} 处");
+        if (fixes > 0) parts.Add($"修订清单 {fixes} 项");
+        if (moved > 0) parts.Add($"搬移文件 {moved} 个");
+        if (art > 0) parts.Add($"重新登记卡图 {art} 张");
+        if (gateAdded > 0) parts.Add($"补齐超框条目 {gateAdded} 条");
+        var head = string.Join("，", parts);
         ResyncStatus.Text = App.DryRun ? head + "（预演，未写入）" : head;
 
         var todo = new List<string>();

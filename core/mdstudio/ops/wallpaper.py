@@ -65,6 +65,22 @@ def _backup_path(h: str) -> Path:
     return runtime.data_dir() / "wallpaper" / "backup" / h
 
 
+def _du3d_backup_path() -> Path:
+    """data.unity3d 的常驻原图备份。
+
+    事务会把原包备份进 journal 目录，但那份会随数据目录重置（换版本、重新解压）一起消失，
+    而 data.unity3d 上百 MB，丢了就再也拿不回来。这里单独留一份，只写一次。
+    """
+    d = runtime.data_dir() / "wallpaper" / "backup"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "data.unity3d"
+
+
+def _du3d_marker() -> Path:
+    """data.unity3d 当前是否被我们改过的标记。写过就有，还原后删掉。"""
+    return runtime.data_dir() / "wallpaper" / "backup" / "data.unity3d.replaced"
+
+
 def _preview_path(h: str, name: str) -> Path:
     d = runtime.data_dir() / "wallpaper" / "preview"
     d.mkdir(parents=True, exist_ok=True)
@@ -283,8 +299,9 @@ def status(ctx) -> dict:
                           "replaced": _is_replaced(ctx, h)})
         if which == "shop":
             du = _data_unity3d_path(ctx)
+            # 历史会被重置，所以除了 journal 还要看那个标记文件，否则改过的图会显示成"没动过"
             items.append({"bundle": "data.unity3d", "present": du is not None,
-                          "replaced": _is_replaced(ctx, du) if du else False})
+                          "replaced": bool(du) and (_is_replaced(ctx, du) or _du3d_marker().is_file())})
         out[which] = {
             "bundles": items,
             "replaced": all(i["replaced"] for i in items if i["present"]),
@@ -408,9 +425,24 @@ def restore(ctx, which=("lobby", "shop")) -> dict:
                     shutil.copy2(bak, p)
                     bak.unlink()
                 done.append({"bundle": h})
+        # data.unity3d 没有历史记录时，用常驻的那份原图还原（这份还原后保留，下次还能用）
+        if "shop" in which and _du3d_marker().is_file():
+            du, bak_du = _data_unity3d_path(ctx), _du3d_backup_path()
+            if du and bak_du.is_file():
+                if not getattr(ctx, "dry_run", False):
+                    shutil.copy2(bak_du, du)
+                done.append({"bundle": "data.unity3d"})
     for target in which:
         for h in _plan(target)[0]:
             _drop_previews(h)
+    if "shop" in which:
+        # data.unity3d 的预览缓存单独一组文件，漏了会导致还原后界面还显示旧图
+        _drop_du3d_previews()
+        if not getattr(ctx, "dry_run", False):
+            try:
+                _du3d_marker().unlink()
+            except OSError:
+                pass
     return {"targets": done}
 
 
@@ -427,6 +459,11 @@ def _apply_data_unity3d(ctx, src, tx) -> int:
         log.warning(tr("data.unity3d not found; skip %s"),
                    ", ".join(SHOP_DATA_UNITY3D_TEXTURES))
         return 0
+    # 真原图只留一份。这一步必须在改之前做：事务里的备份会随数据目录重置一起消失
+    if not getattr(ctx, "dry_run", False):
+        bak = _du3d_backup_path()
+        if not bak.is_file():
+            shutil.copy2(p, bak)
     # 读全部字节再加载：和 6 个 hash 包一样，避免 UnityPy 占着原文件句柄，
     # 否则后面 tx.put_existing 要读原文件做备份 / 写回新内容时会报拒绝访问
     env = UnityPy.load(p.read_bytes())
@@ -459,5 +496,9 @@ def _apply_data_unity3d(ctx, src, tx) -> int:
     shutil.rmtree(tmp, ignore_errors=True)
     # 登记：原包备份进 journal（共享位置，只留真原图）、写回新包、记一条历史
     tx.put_existing(p, new_bytes)
+    try:
+        _du3d_marker().write_text("1", encoding="utf-8")
+    except OSError:
+        pass
     _drop_du3d_previews()
     return n

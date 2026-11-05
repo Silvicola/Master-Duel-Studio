@@ -1,6 +1,6 @@
 # Master Duel Studio
 
-《游戏王 Master Duel》的本地修改工具：召唤动画、发动特效、卡图（超框 / Rush Duel 风格）、大厅壁纸，全部在一个 WinUI 3 程序里完成，所有改动可撤销。
+《游戏王 Master Duel》的本地修改工具：召唤动画、发动特效、卡图（超框）、大厅壁纸，全部在一个 WinUI 3 程序里完成，所有改动可撤销。
 
 > 仅支持 PC 版（Steam）。软件不修改游戏本体，只写入你自己的账号数据目录。
 
@@ -8,7 +8,7 @@
 
 - **召唤动画**：借用官方来源卡、用视频自制（AI 抠像 / 方形模式），或从 Spine 骨骼文件导入
 - **发动特效**：借用官方效果，或用视频 / GIF / 帧文件夹自制，可替换音效槽
-- **卡图**：超框（主体跨出框线，棱彩 / 虹彩 / 幻彩 / 官方四种边框效果）与 Rush Duel 风格整卡重绘
+- **卡图**：超框（主体跨出框线，棱彩 / 虹彩 / 幻彩 / 官方四种边框效果）
 - **壁纸**：替换大厅壁纸与大厅背景（含 `data.unity3d` 内的背景纹理）
 - **整合包**：按卡号把一张卡的动画、特效、卡图一起打包，发给别人即可安装
 - **历史**：每一次改动都可单独撤销；游戏更新后可一键重新同步
@@ -42,7 +42,7 @@
 
 ## 视频教程
 
-完整流程演示（B 站）：**<https://www.bilibili.com/video/BV1BWx962EWS/>**
+完整流程演示（B 站）：**<https://www.bilibili.com/video/BV1tAx96cEdF/>**
 
 ## 使用说明
 
@@ -64,6 +64,9 @@ dotnet build src/MDStudio -c Release
 ```bat
 python tools/build_portable.py
 ```
+
+打包脚本不自带 Python 运行时：先准备一份装好依赖的完整 Python 3.13 放在 `../Env/python`
+（或用环境变量 `MDSTUDIO_ENV` 指向别处），构建时会同步进便携包。
 
 抠像模型 `tools/matting/isnet-anime.onnx` 体积过大不入库，首次使用会自动下载。
 

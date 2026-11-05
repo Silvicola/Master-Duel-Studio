@@ -247,7 +247,7 @@
             Grid.Column="1"
             Padding="18"
             Style="{StaticResource PanelCard}">
-            <!--  右侧：卡片信息头 + 页签（超框 / Rush Duel）+ 内容  -->
+            <!--  右侧：卡片信息头 + 内容  -->
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -277,32 +277,13 @@
                         Text="" />
                 </StackPanel>
 
-                <!--  第二行：切换选项卡（超框 / Rush Duel），样式对齐动画页  -->
-                <SelectorBar
-                    x:Name="SectionBar"
-                    Grid.Row="1"
-                    Margin="0,4,0,8"
-                    SelectionChanged="SectionBar_SelectionChanged">
-                    <SelectorBar.Resources>
-                        <SolidColorBrush x:Key="SelectorBarItemForegroundSelected" Color="{ThemeResource SystemAccentColor}" />
-                        <SolidColorBrush x:Key="SelectorBarItemPillFill" Color="{ThemeResource SystemAccentColor}" />
-                    </SelectorBar.Resources>
-                    <SelectorBarItem
-                        x:Name="OverframeTab"
-                        IsSelected="True"
-                        Tag="overframe"
-                        Text="超框" />
-                    <SelectorBarItem
-                        x:Name="RdTab"
-                        Tag="rushduel"
-                        Text="Rush Duel" />
-                </SelectorBar>
 
                 <!--  超框工作台：预览 + 参数，限一个最大宽度，窄窗口下按比例收缩  -->
                 <Grid x:Name="OverframeSection" Grid.Row="2">
                 <Grid
                     x:Name="OfPanel"
                     MaxWidth="860"
+                    Margin="0,16,0,0"
                     ColumnSpacing="26"
                     HorizontalAlignment="Stretch">
                     <Grid.ColumnDefinitions>
@@ -322,7 +303,7 @@
                     </Grid.RowDefinitions>
 
                     <Grid>
-                        <Viewbox Stretch="Uniform">
+                        <Viewbox Stretch="Uniform" VerticalAlignment="Top">
                             <!--  细线贴着卡片走：线框包着画布，跟着 704:1024 一起缩放，
                                   不再随面板高度拉伸。厚度按设计像素给（300 宽下约 1.3px）  -->
                             <!--  圆角取卡图实测的 26（卡图坐标），细线厚度 3，所以外角给 29，
@@ -608,246 +589,6 @@
                 </Grid>
                 </Grid>
 
-                <!--  Rush Duel 工作台：整卡版式，名字/攻防/效果文字画进贴图  -->
-                <Grid
-                    x:Name="RdPanel"
-                    Grid.Row="2"
-                    Visibility="Collapsed"
-                    MaxWidth="860"
-                    ColumnSpacing="26"
-                    HorizontalAlignment="Stretch">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <!--  预览：合成结果是一张整卡 PNG，直接显示  -->
-                    <Grid x:Name="RdPreviewHost" Width="288" RowSpacing="8">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid>
-                            <Viewbox Stretch="Uniform">
-                                <Border
-                                    Background="Transparent"
-                                    BorderBrush="{ThemeResource TextFillColorSecondaryBrush}"
-                                    BorderThickness="3"
-                                    CornerRadius="29">
-                                    <Grid
-                                        Width="704"
-                                        Height="1024"
-                                        Background="Transparent"
-                                        PointerCaptureLost="RdCard_PointerCaptureLost"
-                                        PointerMoved="RdCard_PointerMoved"
-                                        PointerPressed="RdCard_PointerPressed"
-                                        PointerReleased="RdCard_PointerReleased">
-                                        <Canvas Width="704" Height="1024">
-                                            <Canvas.Clip>
-                                                <RectangleGeometry Rect="0,0,704,1024" />
-                                            </Canvas.Clip>
-                                            <Image x:Name="RdBaseImg" Width="704" Height="1024" />
-                                            <Image
-                                                x:Name="RdSubjImg"
-                                                IsHitTestVisible="False"
-                                                Visibility="Collapsed" />
-                                            <Image
-                                                x:Name="RdPanelImg"
-                                                Width="704"
-                                                Height="1024"
-                                                IsHitTestVisible="False" />
-                                            <Image
-                                                x:Name="RdInfoImg"
-                                                Width="704"
-                                                Height="1024"
-                                                IsHitTestVisible="False" />
-                                        </Canvas>
-                                    </Grid>
-                                </Border>
-                            </Viewbox>
-                            <TextBlock
-                                x:Name="RdHint"
-                                Margin="16"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Style="{StaticResource CaptionTextBlockStyle}"
-                                Text="选一张卡"
-                                TextAlignment="Center"
-                                TextWrapping="Wrap" />
-                        </Grid>
-                        <TextBlock
-                            x:Name="RdCaption"
-                            Grid.Row="1"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
-                            TextAlignment="Center"
-                            TextWrapping="Wrap" />
-                    </Grid>
-
-                    <ScrollViewer
-                        Grid.Column="1"
-                        HorizontalScrollBarVisibility="Disabled"
-                        VerticalScrollBarVisibility="Auto">
-                        <Border
-                            MaxWidth="546"
-                            Padding="16"
-                            HorizontalAlignment="Stretch"
-                            VerticalAlignment="Top"
-                            Background="{ThemeResource LayerFillColorAltBrush}"
-                            BorderBrush="{ThemeResource WellBorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8">
-                            <Grid ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="88" />
-                                </Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-
-                                <TextBlock
-                                    Grid.Row="0"
-                                    Grid.ColumnSpan="2"
-                                    Margin="0,0,0,6"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="卡图背景（填满插图窗）"
-                                    ToolTipService.ToolTip="RD 版式的插图窗比原生大，原版卡图直接用会留黑边；选一张大图做背景即可铺满。" />
-                                <TextBox
-                                    x:Name="RdArtBox"
-                                    Grid.Row="1"
-                                    IsReadOnly="True"
-                                    PlaceholderText="不选就用游戏当前卡图" />
-                                <Button
-                                    Grid.Row="1"
-                                    Grid.Column="1"
-                                    HorizontalAlignment="Stretch"
-                                    Click="RdPickArt_Click"
-                                    Content="选择…" />
-
-                                <TextBlock
-                                    Grid.Row="2"
-                                    Grid.ColumnSpan="2"
-                                    Margin="0,18,0,6"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="主体（推荐带透明通道的 PNG）"
-                                    ToolTipService.ToolTip="主体会放大压上、可以跨出框线；不选就没有出框效果。" />
-                                <TextBox
-                                    x:Name="RdSubjectBox"
-                                    Grid.Row="3"
-                                    IsReadOnly="True"
-                                    PlaceholderText="不给就没有出框" />
-                                <Button
-                                    Grid.Row="3"
-                                    Grid.Column="1"
-                                    HorizontalAlignment="Stretch"
-                                    Click="RdPickSubject_Click"
-                                    Content="选择…" />
-
-                                <!--  边框效果：与超框同一套素材与配色  -->
-                                <TextBlock
-                                    Grid.Row="4"
-                                    Grid.ColumnSpan="2"
-                                    Margin="0,18,0,6"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="边框效果" />
-                                <controls:WheelSafeComboBox
-                                    x:Name="RdEffectBox"
-                                    Grid.Row="5"
-                                    Grid.ColumnSpan="2"
-                                    HorizontalAlignment="Stretch"
-                                    SelectionChanged="RdEffectBox_SelectionChanged" />
-
-                                <TextBlock
-                                    Grid.Row="6"
-                                    Grid.ColumnSpan="2"
-                                    Margin="0,18,0,6"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="主体大小" />
-                                <Slider
-                                    x:Name="RdScaleSlider"
-                                    Grid.Row="7"
-                                    Grid.Column="0"
-                                    HorizontalAlignment="Stretch"
-                                    IsThumbToolTipEnabled="False"
-                                    Maximum="3"
-                                    Minimum="0.5"
-                                    StepFrequency="0.1"
-                                    Value="1"
-                                    ValueChanged="RdScale_ValueChanged" />
-                                <TextBlock
-                                    x:Name="RdScaleText"
-                                    Grid.Row="7"
-                                    Grid.Column="1"
-                                    HorizontalAlignment="Right"
-                                    VerticalAlignment="Center"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="1.0×" />
-
-                                <!--  效果框透明度：只影响下方那一块，主体从框里透出来  -->
-                                <TextBlock
-                                    Grid.Row="8"
-                                    Grid.ColumnSpan="2"
-                                    Margin="0,18,0,6"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="效果框透明度"
-                                    ToolTipService.ToolTip="调低后效果框变透明，被它压住的主体从框里透出来；卡名、攻防、星级、属性与文字始终不透明。" />
-                                <Slider
-                                    x:Name="RdAlphaSlider"
-                                    Grid.Row="9"
-                                    Grid.Column="0"
-                                    HorizontalAlignment="Stretch"
-                                    IsThumbToolTipEnabled="False"
-                                    Maximum="1"
-                                    Minimum="0.2"
-                                    StepFrequency="0.01"
-                                    Value="1"
-                                    ValueChanged="RdAlpha_ValueChanged" />
-                                <TextBlock
-                                    x:Name="RdAlphaText"
-                                    Grid.Row="9"
-                                    Grid.Column="1"
-                                    HorizontalAlignment="Right"
-                                    VerticalAlignment="Center"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="100%" />
-
-                                <StackPanel
-                                    Grid.Row="10"
-                                    Grid.ColumnSpan="2"
-                                    Margin="0,16,0,0"
-                                    Orientation="Horizontal"
-                                    Spacing="8">
-                                    <Button
-                                        x:Name="RdApplyBtn"
-                                        Click="RdApplyBtn_Click"
-                                        Content="写入游戏"
-                                        IsEnabled="False"
-                                        Style="{StaticResource AccentButtonStyle}" />
-                                    <Button
-                                        x:Name="RdRevertBtn"
-                                        Click="RdRevertBtn_Click"
-                                        Content="撤回这张卡的 RD 卡图"
-                                        IsEnabled="False" />
-                                </StackPanel>
-                            </Grid>
-                        </Border>
-                    </ScrollViewer>
-                </Grid>
             </Grid>
         </ContentControl>
 

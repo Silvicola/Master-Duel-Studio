@@ -274,7 +274,8 @@ def resync(ctx) -> dict:
     recs = ctx.journal.load()
     step(tr("checking %s change(s) against the game"), len(recs))
     tx = Tx(ctx, "resync", 0, record=False)
-    report = {"cutin": [], "runfx": [], "catalog": 0, "moved": [], "lost_files": [], "broken": {}}
+    report = {"cutin": [], "runfx": [], "catalog": 0, "moved": [], "lost_files": [],
+              "broken": {}, "overframe": [], "gate_added": 0}
     live_sigs = {runfx_sig(e) for e in tx.runfx_gate.entries} if any(r.runfx_added for r in recs) else set()
     changed = []
     shas = last_sha(recs)
@@ -335,7 +336,36 @@ def resync(ctx) -> dict:
             if tx.catalog.deps(name) != want:
                 tx.catalog.set(name, want)
                 report["catalog"] += 1
-    if report["cutin"] or report["runfx"] or report["catalog"] or report["moved"]:
+
+    # 卡图的登记表（of_card_asset）是松散覆盖的 gate bundle，会以两种方式失真：
+    # 1) 游戏更新给内置表加了条目，本机这份不会跟着刷新，缺的卡在游戏里就没超框效果；
+    # 2) 撤销/重写/换号之后，我们自己的条目整片丢掉，纹理还是超框图但游戏当普通卡渲染，
+    #    自绘的卡名/攻防/效果文字就和原生文字叠在一起。
+    # 一次同步把两件事都补上：先把内置表并进来（纯加法），再按 journal 重新登记做过的卡。
+    art_cards = sorted({r.card for r in recs if r.card and family(r.op) == "overframe"})
+    from mdstudio.ops import overframe as OF
+
+    try:
+        gp = OF.gate_bundle_path(ctx)
+        live = OF.gate_records(ctx)
+        before = {t for t, _ in live}
+        merged = OF.merge_builtin(live, OF.bundled_gate_records(ctx))
+        added = [t for t, _ in merged if t not in before]
+        missing = [c for c in art_cards if c not in {t for t, _ in merged}]
+        for c in missing:
+            merged = OF._add_entry(merged, c)
+            log.warning(tr("card art %s: re-registered as over-frame"), c)
+        if added or missing:
+            tx.put_existing(gp, OF._gate_bytes_with(gp, merged))
+            report["overframe"] = missing
+            report["gate_added"] = len(added)
+            if added:
+                log.info(tr("over-frame table: restored %s official entries"), len(added))
+    except MDStudioError as e:
+        log.warning(tr("card art registration not restored: %s"), e)
+
+    if (report["cutin"] or report["runfx"] or report["catalog"] or report["moved"]
+            or report["overframe"]):
         tx.commit()
     report["runfx"] = sorted(set(report["runfx"]))
     if changed and not ctx.dry_run:

@@ -158,15 +158,6 @@ def _of_apply(ctx, card, art=None, subject=None, scale=1.0, dx=0, dy=0,
 
     effect = OF.normalize_effect(effect)
 
-    # 与 RD 全局主题互斥：主题开着的时候写超框，卡框会一张 MD 一张 RD，
-    # 所以先把主题还原回原版，界面会先弹提示确认。
-    from mdstudio.ops import appearance as AP
-
-    theme_reverted = False
-    if AP.status(ctx.game).get("applied"):
-        AP.revert_theme(ctx)
-        theme_reverted = True
-
     user_art = art
     if art is None:
         art = str(OF.base_art(ctx, int(card)))
@@ -188,104 +179,13 @@ def _of_apply(ctx, card, art=None, subject=None, scale=1.0, dx=0, dy=0,
                      scale, dx, dy, lore_alpha,
                      effect=effect)
     data["image"] = str(img_path)
-    data["theme_reverted"] = theme_reverted
     return data
 
 
-@register("rushduel.apply")
-def _rd_apply(ctx, card, art=None, subject=None, scale=1.0, dx=0, dy=0,
-              effect="", frame_alpha=1.0, preview_dir=None):
-    """合成 RD 卡图 + 写入 + 登记超框。
-
-    写进去的手段跟超框完全一样（换掉这张卡的插图纹理，并在 of_card_asset 里登记），
-    所以撤销也走同一条历史。卡名/攻防/效果文字都画进贴图，游戏原生文字层会被
-    超框机制抑制，位置完全由贴图决定。
-    """
-    from mdstudio.core.cards import CardDB
-    from mdstudio.errors import MDStudioError
-    from mdstudio.i18n import tr
-    from mdstudio.ops import overframe as OF
-    from mdstudio.ops import rushduel as RD
-
-    real = CardDB(ctx.game).load().placeholder_of(int(card))
-    if real:
-        raise MDStudioError(tr("card %s is a placeholder copy; the game renders %s")
-                            % (int(card), real))
-
-    info = RD.card_info(ctx, int(card))
-    user_art = art
-    if art is None:
-        art = str(OF.base_art(ctx, int(card)))
-    out = None
-    if preview_dir:
-        out = str(Path(preview_dir) / f"{int(card)}_rd.png")
-    img_path = RD.compose(int(card), art=art, name=info["name"], atk=info["atk"],
-                          dfn=info["def"], level=info["level"], desc=info["desc"],
-                          category=info["category"], attribute_en=info["attribute_en"],
-                          race_en=info["race_en"], pendulum_scale=info["scale"],
-                          subject=subject, scale=scale, dx=dx, dy=dy, effect=effect,
-                          frame_alpha=frame_alpha, out=out)
-    with Image.open(img_path) as im:
-        data = OF.apply(ctx, int(card), im.convert("RGBA"))
-
-    # 记住素材与参数，下次打开这张卡自动还原（dry run 不落盘）
-    if not getattr(ctx, "dry_run", False):
-        RD.save_edit(ctx, int(card), art,
-                     Path(art).name if user_art else "游戏原图",
-                     subject, Path(subject).name if subject else "",
-                     scale, dx, dy, effect, frame_alpha)
-    data["image"] = str(img_path)
-    return data
 
 
-@register("rushduel.remove")
-def _rd_remove(ctx, card):
-    from mdstudio.ops import overframe as OF
-    from mdstudio.ops import rushduel as RD
-
-    data = OF.remove(ctx, int(card))
-    if not getattr(ctx, "dry_run", False):
-        RD.clear_edit(ctx, int(card))
-    return data
 
 
-@register("appearance.apply")
-def _ap_apply(ctx, revert_overframes=True):
-    """应用 RD 全局主题。
-
-    与超框互斥：超框是把 MD 版式烘进单卡插图，两者同时存在会一张卡一种样式，
-    所以应用前先把作过超框的卡全部还原。界面会先弹提示让用户确认。
-    """
-    from mdstudio.ops import appearance as AP
-    from mdstudio.ops import overframe as OF
-
-    restored = []
-    if revert_overframes:
-        for card in sorted(OF.ours(ctx)):
-            try:
-                OF.remove(ctx, card, drop_register=True)
-                restored.append(card)
-            except Exception:
-                continue
-
-    # 还原超框会在历史里留下记录，清掉对应的编辑参数，免得下次打开还带着
-    if restored and not getattr(ctx, "dry_run", False):
-        for card in restored:
-            try:
-                OF.clear_edit(ctx, card)
-            except Exception:
-                pass
-
-    data = AP.apply_theme(ctx)
-    data["restored_overframes"] = restored
-    return data
-
-
-@register("appearance.revert")
-def _ap_revert(ctx):
-    from mdstudio.ops import appearance as AP
-
-    return AP.revert_theme(ctx)
 
 
 @register("overframe.remove")

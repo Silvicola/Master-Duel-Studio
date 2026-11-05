@@ -993,8 +993,8 @@ def clear_edit(ctx, card_id: int):
 
 
 # ------------------------------------------------------------------ 登记表（开关）
-def _bundle_has_gate(path: Path) -> bool:
-    """这个 bundle 里有没有名为 of_card_asset 的 TextAsset。
+def _gate_entries_at(path: Path):
+    """这个 bundle 里的登记条目；不是 gate bundle 就返回 None。
 
     从字节加载而不是 UnityPy.load(路径)：后者会一直握着文件句柄，
     随后的 os.replace 会被 Windows 判成"文件被占用"（WinError 5）。
@@ -1004,16 +1004,25 @@ def _bundle_has_gate(path: Path) -> bool:
     try:
         env = UnityPy.load(path.read_bytes())
     except Exception:
-        return False
-    for o in env.objects:
-        if o.type.name != "TextAsset":
-            continue
-        try:
-            if str(o.read().m_Name) == GATE_NAME:
-                return True
-        except Exception:
-            continue
-    return False
+        return None
+    o = _gate_object(env)
+    if o is None:
+        return None
+    try:
+        return _parse_script(_script_bytes(o.read()))
+    except Exception:
+        return None
+
+
+def _bundle_has_gate(path: Path) -> bool:
+    return _gate_entries_at(path) is not None
+
+
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def gate_bundle_path(ctx) -> Path:
@@ -1028,15 +1037,23 @@ def gate_bundle_path(ctx) -> Path:
     key = str(root)
 
     # 快路：已知 id
+    # 判断"是不是当前生效的那份"只有一个可靠依据: 它得覆盖游戏内置表.
+    # 游戏换 id 时旧文件可能留在盘上, 光看"里面有 gate"会一直认着过期的那份.
+    builtin = {t for t, _ in bundled_gate_records(ctx)}
+
+    def fits(p: Path) -> bool:
+        ent = _gate_entries_at(p)
+        return ent is not None and {t for t, _ in ent} >= builtin
+
     for gid in GATE_KNOWN_IDS:
         p = ctx.game.find(gid)
-        if p and _bundle_has_gate(p):
+        if p and fits(p):
             _GATE_CACHE = (key, p)
             return p
 
     if _GATE_CACHE and _GATE_CACHE[0] == key:
         p = Path(_GATE_CACHE[1])
-        if p.is_file() and _bundle_has_gate(p):
+        if p.is_file() and fits(p):
             return p
 
     cache_file = runtime.data_dir() / "overframe" / "_gate_bundle.json"
@@ -1044,7 +1061,7 @@ def gate_bundle_path(ctx) -> Path:
         c = json.loads(cache_file.read_text(encoding="utf-8"))
         if c.get("root") == key and c.get("id"):
             p = ctx.game.find(c["id"])
-            if p and _bundle_has_gate(p):
+            if p and fits(p):
                 _GATE_CACHE = (key, p)
                 return p
     except (OSError, ValueError, KeyError):
@@ -1064,17 +1081,34 @@ def gate_bundle_path(ctx) -> Path:
     except OSError:
         pass
     cands.sort(key=lambda x: x[0])
+    # 旧版本残留的表条目少、体积也小, 排在前面先被读到. 所以不能"第一个命中就用",
+    # 要挑能覆盖当前官方表的那份 (2026-11-05 实测: 1 条的残表排在 69 条的正表前面).
+    hits = []
+    probe = 0
     for _, p in cands:
-        if _bundle_has_gate(p):
-            try:
-                cache_file.parent.mkdir(parents=True, exist_ok=True)
-                cache_file.write_text(json.dumps({"root": key, "id": p.name}),
-                                      encoding="utf-8")
-            except OSError:
-                pass
-            _GATE_CACHE = (key, p)
-            return p
-    raise MDStudioError(tr("over-frame gate bundle not found under %s") % root)
+        ent = _gate_entries_at(p)
+        if ent is None:
+            continue
+        hits.append((ent, p))
+        if {t for t, _ in ent} >= builtin:
+            break
+        probe += 1
+        if probe >= 60:
+            # 兜底: 找不到能覆盖的(本机那份本身就是残表), 别为之一口气翻完整个目录
+            break
+    if not hits:
+        raise MDStudioError(tr("over-frame gate bundle not found under %s") % root)
+    # 能覆盖官方表的优先, 其次改得新(游戏写过的那份), 再次条目多
+    _, p = max(hits, key=lambda h: ({t for t, _ in h[0]} >= builtin,
+                                    _mtime(h[1]), len(h[0])))
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps({"root": key, "id": p.name}),
+                              encoding="utf-8")
+    except OSError:
+        pass
+    _GATE_CACHE = (key, p)
+    return p
 
 
 def os_walk(root):
@@ -1125,27 +1159,30 @@ def ours(ctx) -> set:
             if r.card and family_of(r.op) == "overframe"}
 
 
-def bundled_gate_triggers(ctx) -> set:
-    """游戏内置那份登记表（data.unity3d 里）的触发卡号。
+def bundled_gate_records(ctx) -> list:
+    """游戏内置那份登记表（data.unity3d 里）的条目 [(触发卡号, 底图卡号)]。
 
-    这一份不受我们写入影响，是判断「官方超框」的依据。按 data.unity3d 的
-    大小 + 修改时间缓存，游戏更新后自动重建。
+    这一份不受我们写入影响：既是判断「官方超框」的依据，也是本机那份松散覆盖文件
+    该有的基准。按 data.unity3d 的大小 + 修改时间缓存，游戏更新后自动重建。
     """
     p = ctx.game.dir / "masterduel_Data" / "data.unity3d"
     if not p.is_file():
-        return set()
-    fp = [p.stat().st_size, int(p.stat().st_mtime)]
+        return []
+    try:
+        fp = [p.stat().st_size, int(p.stat().st_mtime)]
+    except OSError:
+        return []
     cache = runtime.data_dir() / "overframe" / "_official_gate.json"
     if cache.is_file():
         try:
             d = json.loads(cache.read_text(encoding="utf-8"))
-            if d.get("fp") == fp:
-                return {int(c) for c in d["ids"]}
-        except (OSError, ValueError, KeyError):
+            if d.get("fp") == fp and "recs" in d:
+                return [(int(t), int(b)) for t, b in d["recs"]]
+        except (OSError, ValueError, KeyError, TypeError):
             pass
     import UnityPy
 
-    ids = set()
+    recs = []
     for o in UnityPy.load(p.read_bytes()).objects:
         if o.type.name != "TextAsset":
             continue
@@ -1155,14 +1192,35 @@ def bundled_gate_triggers(ctx) -> set:
             continue
         if str(d.m_Name) != GATE_NAME:
             continue
-        ids = {t for t, _ in _parse_script(_script_bytes(d))}
+        recs = _parse_script(_script_bytes(d))
         break
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"fp": fp, "ids": sorted(ids)}), encoding="utf-8")
+        cache.write_text(json.dumps(
+            {"fp": fp, "recs": [[int(t), int(b)] for t, b in recs]}), encoding="utf-8")
     except OSError:
         pass
-    return ids
+    return recs
+
+
+def bundled_gate_triggers(ctx) -> set:
+    return {t for t, _ in bundled_gate_records(ctx)}
+
+
+def merge_builtin(records, builtin) -> list:
+    """把内置表并进本机那份：内置为底，本机独有的追加在后面。
+
+    本机那份是松散覆盖文件，游戏更新改了内置表它不会跟着刷新（实测过 25 条 vs 69 条），
+    缺的卡在游戏里就没有超框效果。并表只做加法，不动已有映射。
+    """
+    out, seen = [], set()
+    for t, b in list(builtin) + list(records):
+        t = int(t)
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append((t, int(b)))
+    return out
 
 
 def official_registered(ctx) -> set:

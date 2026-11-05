@@ -407,9 +407,15 @@ public sealed partial class WallpaperPage : Page
     private void SetLobbyStatus(string text) => LobbyStatusText.Text = text;
     private void SetShopStatus(string text) => ShopStatusText.Text = text;
 
-    private static bool Flag(JsonElement root, string key) =>
-        root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Object &&
-        v.TryGetProperty("replaced", out var r) && r.ValueKind == JsonValueKind.True;
+    /// <summary>有没有被替换过。看 any_replaced：六个包里只换了一个也得能点还原。</summary>
+    private static bool Flag(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty(key, out var v) || v.ValueKind != JsonValueKind.Object)
+            return false;
+        if (v.TryGetProperty("any_replaced", out var any) && any.ValueKind == JsonValueKind.True)
+            return true;
+        return v.TryGetProperty("replaced", out var r) && r.ValueKind == JsonValueKind.True;
+    }
 
     private static string Str(JsonElement root, string key) =>
         root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String

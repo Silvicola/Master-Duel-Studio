@@ -70,27 +70,53 @@ public sealed partial class HistoryPage : Page
                         ? cv.GetInt32() : -1;
                     var total = r.TryGetProperty("total", out var tv) && tv.ValueKind == JsonValueKind.Number
                         ? tv.GetInt32() : -1;
+                    string op = Text(r, "op");
+                    string fromText = Text(r, "from");
+                    bool isWallpaper = op.StartsWith("wallpaper.");
+                    bool undoable = !r.TryGetProperty("undoable", out var u) ||
+                                    u.ValueKind != JsonValueKind.False;
+
+                    // 明细只留必要的东西: 整合包带各类型数量, 音效带槽位名.
+                    // 动画的帧数/时长这类细节不放在列表里, 一行一个改动看着才清爽.
+                    var det = r.TryGetProperty("detail", out var dv) && dv.ValueKind == JsonValueKind.Object
+                        ? dv : default;
+                    string extra = "";
+                    string source = "";
+                    int files = 0;
+                    if (det.ValueKind == JsonValueKind.Object)
+                    {
+                        files = int.TryParse(Text(det, "files"), out var f) ? f : 0;
+                        source = Text(det, "source");
+                        if (source.Length == 0) source = Text(det, "path");
+                        if (op == "sound.inject") extra = Text(det, "label");
+                    }
+
                     string countText;
                     if (card > 0)
                         countText = name.Length > 0 ? $"{card} {name}" : card.ToString();
                     else if (cards >= 0)
-                        countText = total > 0 ? $"{cards} / {total} 张卡" : $"{cards} 张卡";
+                        countText = (total > 0 ? $"{cards} / {total} 张卡" : $"{cards} 张卡") + PackKinds(det);
+                    else if (extra.Length > 0)
+                        countText = extra;       // 音效没有卡号, 槽位名就是它的明细
                     else
                         countText = "—";
-                    // 壁纸的 op 都是 wallpaper.set，用 meta 里的 label（大厅壁纸 / 大厅背景）区分，
-                    // 否则历史里会一律显示成「替换大厅壁纸」。
-                    string op = Text(r, "op");
-                    string fromText = Text(r, "from");
-                    bool isWallpaper = op.StartsWith("wallpaper.");
+
+                    // 悬停补充: 只在真的多出信息时给, 免得每行都弹一个重复内容的提示
+                    var tips = new List<string>();
+                    if (files > 0) tips.Add($"改动 {files} 个文件");
+                    if (source.Length > 0) tips.Add(source);
+                    if (!undoable) tips.Add("这条不改游戏文件，没有可撤销的内容");
+
                     _records.Add(new HistoryItem
                     {
                         Id = Text(r, "id"),
                         OpText = isWallpaper ? WallpaperText(fromText) : OpText(op),
                         CardText = countText,
                         Time = Text(r, "time"),
-                        From = isWallpaper ? "" : fromText,
-                        Undoable = !r.TryGetProperty("undoable", out var u) ||
-                                   u.ValueKind != JsonValueKind.False,
+                        // 壁纸与音效的来源就是它们自己的名字, 已经在明细里显示过了
+                        From = isWallpaper || op == "sound.inject" ? "" : fromText,
+                        Undoable = undoable,
+                        Tip = tips.Count > 0 ? string.Join("\n", tips) : null,
                     });
                 }
             }
@@ -131,9 +157,36 @@ public sealed partial class HistoryPage : Page
         "pack.art" => "整合包·卡图",
         "pack.export" => "导出整合包",
         "pack.install" => "安装整合包",
+        "overframe.set" => "修改超框卡图",
+        "sound.inject" => "替换音效",
         "wallpaper.set" => "替换大厅壁纸",
         _ => op,
     };
+
+    /// <summary>整合包条目的类型名。</summary>
+    private static string KindName(string kind) => kind switch
+    {
+        "cutin" => "召唤动画",
+        "runfx" => "发动特效",
+        "art" => "卡图",
+        _ => kind,
+    };
+
+    /// <summary>整合包记录的类型分布：「（卡图 1、召唤动画 2）」。老记录没有这个字段就返回空串。</summary>
+    private static string PackKinds(JsonElement det)
+    {
+        if (det.ValueKind != JsonValueKind.Object ||
+            !det.TryGetProperty("kinds", out var kinds) || kinds.ValueKind != JsonValueKind.Object)
+            return "";
+        var parts = new List<string>();
+        foreach (var kind in new[] { "art", "cutin", "runfx" })
+        {
+            if (kinds.TryGetProperty(kind, out var v) &&
+                v.ValueKind == JsonValueKind.Number && v.GetInt32() > 0)
+                parts.Add($"{KindName(kind)} {v.GetInt32()}");
+        }
+        return parts.Count > 0 ? "（" + string.Join("、", parts) + "）" : "";
+    }
 
     /// <summary>壁纸记录按 meta 里的 label 显示：大厅壁纸 / 大厅背景 / 两者都换。</summary>
     private static string WallpaperText(string label) => label switch

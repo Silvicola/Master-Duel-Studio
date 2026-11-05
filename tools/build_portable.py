@@ -2,6 +2,10 @@
 """打便携版: Release 发布 + 收集后端与随包资源 + 启动器 + zip.
 
 用法: python tools/build_portable.py [--skip-publish] [--no-zip] [-o 输出目录名]
+
+随包 Python(约 364MB) 不在本脚本里生成, 从 ..\\Env\\python 取主副本.
+删掉 dist 目录也能自动补回; 要装新依赖请装在 Env\\python 上, 构建会同步过去.
+换位置用环境变量 MDSTUDIO_ENV 指定.
 """
 import os
 import shutil
@@ -34,6 +38,10 @@ DIST = ROOT / "dist" / OUT_NAME
 ZIP = ROOT / "dist" / f"{OUT_NAME}-便携版.zip"
 # dotnet 从 PATH 找, 或环境变量 DOTNET 指定. 不写死安装路径: 开源后别人的 SDK 装在哪都不一样
 DOTNET = os.environ.get("DOTNET") or shutil.which("dotnet") or "dotnet"
+# 随包 Python(整份 base Python + 依赖, 约 364MB)的主副本放在工程外面:
+# dist\ 是构建产物, 用户习惯每次测试都删掉重解压, 放里面迟早丢; Env\ 不在那个目录里
+ENV_DIR = Path(os.environ.get("MDSTUDIO_ENV") or (ROOT.parent / "Env"))
+PY_MASTER = ENV_DIR / "python"
 
 skip_publish = "--skip-publish" in sys.argv
 no_zip = "--no-zip" in sys.argv
@@ -101,20 +109,69 @@ def adopt_local_state():
     """
     sibs = [p for p in (ROOT / "dist").glob("MDStudio-*")
             if p.is_dir() and p.resolve() != DIST.resolve()
-            and any((p / n).exists() for n in ("config", "data", "python"))]
+            and any((p / n).exists() for n in ("config", "data"))]
     if not sibs:
         return
     # 目录名带 ISO 日期后缀, 按名字取最大 = 最近发的那一版
     src = max(sibs, key=lambda p: p.name)
-    # python\ 是整份随包运行时(约 376MB), 少了这里构建会直接停下, 所以也要继承
-    for name in ("config", "data", "python"):
+    for name in ("config", "data"):
         s, d = src / name, DIST / name
         if s.is_dir() and not d.exists():
             print(f"继承上一份 {name}/ <- {src.name}")
             shutil.copytree(s, d)
 
 
+def tree_fp(p: Path):
+    """目录指纹: 文件数 + 总字节. 用来判断两份 Python 是否已经一样."""
+    n = total = 0
+    for root, dirs, files in os.walk(p):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        for f in files:
+            if f.endswith((".pyc", ".pyo")):
+                continue
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+                n += 1
+            except OSError:
+                pass
+    return (n, total)
+
+
+def ensure_python():
+    """把随包 Python 放进构建目录. 脚本只搬不改, 自己生成不了这一块.
+
+    Env\\python 是唯一主副本: 要往随包环境里装东西(新依赖、补 DLL)就装在它上面,
+    构建时会把差异同步进构建目录. 反过来往 dist 里装没用, 下次构建会被覆盖.
+    没有主副本时(别人克隆仓库跑), 沿用构建目录里现有的, 再退到上一份 dist 产物.
+    """
+    dst = DIST / "python"
+    if (PY_MASTER / "python.exe").is_file():
+        if (dst / "python.exe").is_file() and tree_fp(dst) == tree_fp(PY_MASTER):
+            return
+        if dst.exists():
+            shutil.rmtree(dst)
+        print(f"搬随包 Python <- {PY_MASTER}  {dir_size_mb(PY_MASTER):.0f} MB, 稍等…")
+        shutil.copytree(PY_MASTER, dst)
+        return
+    if (dst / "python.exe").is_file():
+        print(f"! 没有主副本 {PY_MASTER}, 沿用构建目录里现有的 python/")
+        return
+    sibs = [p for p in (ROOT / "dist").glob("MDStudio-*")
+            if p.is_dir() and p.resolve() != DIST.resolve()
+            and (p / "python" / "python.exe").is_file()]
+    if sibs:
+        src = max(sibs, key=lambda p: p.name) / "python"
+        print(f"搬随包 Python <- 上一份 dist 产物  {dir_size_mb(src):.0f} MB, 稍等…")
+        shutil.copytree(src, dst)
+        return
+    raise SystemExit(
+        f"缺少随包 Python: {dst / 'python.exe'}\n"
+        f"把一份装好依赖的完整 Python 3.13 放到 {PY_MASTER} 再跑, "
+        f"或用环境变量 MDSTUDIO_ENV 指向别的位置.")
+
+
 adopt_local_state()
+ensure_python()
 
 # ---------------------------------------------------------------- 2. 收主程序
 # publish 目录里的东西一个都不能漏: .pri 是 XAML 资源索引, 少了 MainWindow.xaml 就加载失败
