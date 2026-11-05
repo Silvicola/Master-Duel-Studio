@@ -1,7 +1,7 @@
 """mdstudio - Master Duel cut-in / run-effect toolkit."""
 
-__version__ = "beta1-20261104"   # 测试版第 1 版 + 年月日
-__build__ = "2026.11.04"         # 打包日期
+__version__ = "beta1-20261106"   # 测试版第 1 版 + 年月日
+__build__ = "2026.11.06"         # 打包日期
 
 
 def ensure_std_streams():
