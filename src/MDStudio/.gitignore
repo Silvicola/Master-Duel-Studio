@@ -40,7 +40,9 @@ BundleArtifacts/
 
 # Publish output
 publish/
-*.pubxml
+# 发布配置模板（不含本机路径）要入库，新 clone 后能直接在 VS 里右键发布。
+# 只排除 VS 按用户生成的 .pubxml.user。
+*.pubxml.user
 PublishScripts/
 
 # Code analysis and tooling

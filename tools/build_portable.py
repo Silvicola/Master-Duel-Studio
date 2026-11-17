@@ -24,16 +24,36 @@ TOOLS_SRC = ROOT / "tools"
 # tools/ 里除了随包资源，还有构建脚本本身，别把它们塞进包里
 # gen_*.py 是素材生成器，依赖作者本地的参考图，跑不起来也用不上
 TOOLS_SKIP = ("build_portable.py", "make_icon.py", "write_launcher.py", "assets", "gen_*.py")
-# 输出目录名跟随版本号 (core/mdstudio/__init__.py 的 __version__): MDStudio-beta1-20261103。
-# 仍可用 -o 覆盖: 资源管理器按路径缓存 exe 图标, 同路径下文件换了也还是显示旧的,
+# 输出目录名跟随版本号 (core/mdstudio/__init__.py 的 __version__): MDStudio-v-1.0.0-beta_202611161353。
+# 版本号写法 v-主.次.修订-beta_年月日时分 (2026-11-16 起精确到分钟, 12 位)。
+# 打包时按当前时刻自动写回 __init__.py, 不用手工改版本号。
+# 仍可用 -o 覆盖目录名: 资源管理器按路径缓存 exe 图标, 同路径下文件换了也还是显示旧的,
 # 想看新图标就换个目录名, 不用去动系统图标缓存。
 import re as _re
+from datetime import datetime as _dt
 
-_m = _re.search(r'__version__ = "([^"]+)"',
-                (ROOT / "core" / "mdstudio" / "__init__.py").read_text(encoding="utf-8"))
+_INIT = ROOT / "core" / "mdstudio" / "__init__.py"
+_no_stamp = "--no-stamp" in sys.argv   # 调试用: 保留当前版本号, 不按时间刷新
+if not _no_stamp:
+    _now = _dt.now()
+    _stamp = _now.strftime("%Y%m%d%H%M")
+    _build = _now.strftime("%Y.%m.%d")
+    _src = _INIT.read_text(encoding="utf-8")
+    # 2026-11-17 起进入正式版，版本号后缀固定 release_（以前的 beta_ 不再写回）
+    _src = _re.sub(r'(__version__\s*=\s*")v-[^"]+(")',
+                   lambda m: m.group(1) + f"v-1.0.0-release_{_stamp}" + m.group(2), _src, count=1)
+    _src = _re.sub(r'(__build__\s*=\s*")[^"]*(")',
+                   lambda m: m.group(1) + _build + m.group(2), _src, count=1)
+    _INIT.write_text(_src, encoding="utf-8")
+    print(f"版本号自动写回: v-1.0.0-release_{_stamp}  build {_build}", flush=True)
+
+_m = _re.search(r'__version__ = "([^"]+)"', _INIT.read_text(encoding="utf-8"))
 OUT_NAME = f"MDStudio-{_m.group(1) if _m else 'unknown'}"
 if "-o" in sys.argv:
-    OUT_NAME = sys.argv[sys.argv.index("-o") + 1]
+    i = sys.argv.index("-o")
+    if i + 1 >= len(sys.argv):
+        raise SystemExit("-o 后面要跟输出目录名, 例如: -o MDStudio-test")
+    OUT_NAME = sys.argv[i + 1]
 DIST = ROOT / "dist" / OUT_NAME
 ZIP = ROOT / "dist" / f"{OUT_NAME}-便携版.zip"
 # dotnet 从 PATH 找, 或环境变量 DOTNET 指定. 不写死安装路径: 开源后别人的 SDK 装在哪都不一样
@@ -45,9 +65,18 @@ PY_MASTER = ENV_DIR / "python"
 
 skip_publish = "--skip-publish" in sys.argv
 no_zip = "--no-zip" in sys.argv
+# 便携版默认**不带**额外组件（抠像模型 168MB / 超分 39MB / Spine 转换器 11MB）:
+# 这三样由用户在设置页按需下载, 下到程序目录的 tools/ 下同一个位置。
+# 想要一解压就全都能用的离线包, 加 --full。
+slim = "--full" not in sys.argv
+# 默认只留 zip：同名目录是打包过程的中间产物，用户自己解压就行。
+# 调试要直接跑那个目录时加 --keep-dir。
+keep_dir = "--keep-dir" in sys.argv
 
-# 本地的东西不该被清掉: .pyenv 装一次要几分钟, data/config 是用户数据
-KEEP_LOCAL = {".pyenv", "data", "config", "python"}
+# 本地的东西不该被清掉: .pyenv 装一次要几分钟, data/config 是用户数据,
+# tools/ 里还存着用户在设置页按需下载的组件（抠像模型 168MB / 超分 39MB / 转换器 11MB）——
+# 不保留的话每打一次包就得重下一遍。源文件照旧覆盖过来（copytree dirs_exist_ok）。
+KEEP_LOCAL = {".pyenv", "data", "config", "python", "tools"}
 
 
 def run(args, cwd=None):
@@ -140,34 +169,35 @@ def tree_fp(p: Path):
 def ensure_python():
     """把随包 Python 放进构建目录. 脚本只搬不改, 自己生成不了这一块.
 
-    Env\\python 是唯一主副本: 要往随包环境里装东西(新依赖、补 DLL)就装在它上面,
-    构建时会把差异同步进构建目录. 反过来往 dist 里装没用, 下次构建会被覆盖.
-    没有主副本时(别人克隆仓库跑), 沿用构建目录里现有的, 再退到上一份 dist 产物.
+    Env\\python 是唯一源: 要往随包环境里装东西(新依赖、补 DLL)就装在它上面,
+    构建时整个复制进 dist. 反过来往 dist 里装没用, 下次构建会被覆盖.
+    dist 是纯输出目录, 随时会被用户清空, 绝不能从里面取 Python 当源 ——
+    既不沿用构建目录那份, 也不从上一份产物复制 (2026-11-16 用户定, 口径要唯一).
     """
     dst = DIST / "python"
-    if (PY_MASTER / "python.exe").is_file():
-        if (dst / "python.exe").is_file() and tree_fp(dst) == tree_fp(PY_MASTER):
-            return
-        if dst.exists():
-            shutil.rmtree(dst)
-        print(f"搬随包 Python <- {PY_MASTER}  {dir_size_mb(PY_MASTER):.0f} MB, 稍等…")
-        shutil.copytree(PY_MASTER, dst)
+    if not (PY_MASTER / "python.exe").is_file():
+        raise SystemExit(
+            f"缺少随包 Python 主副本: {PY_MASTER / 'python.exe'}\n"
+            f"把一份装好依赖的完整 Python 3.13 放到 {PY_MASTER} 再跑, "
+            f"或用环境变量 MDSTUDIO_ENV 指向别的位置.\n"
+            f"(dist 里的 python 不作为源, 它随时可能被清空.)")
+    if (dst / "python.exe").is_file() and tree_fp(dst) == tree_fp(PY_MASTER):
         return
-    if (dst / "python.exe").is_file():
-        print(f"! 没有主副本 {PY_MASTER}, 沿用构建目录里现有的 python/")
-        return
-    sibs = [p for p in (ROOT / "dist").glob("MDStudio-*")
-            if p.is_dir() and p.resolve() != DIST.resolve()
-            and (p / "python" / "python.exe").is_file()]
-    if sibs:
-        src = max(sibs, key=lambda p: p.name) / "python"
-        print(f"搬随包 Python <- 上一份 dist 产物  {dir_size_mb(src):.0f} MB, 稍等…")
-        shutil.copytree(src, dst)
-        return
-    raise SystemExit(
-        f"缺少随包 Python: {dst / 'python.exe'}\n"
-        f"把一份装好依赖的完整 Python 3.13 放到 {PY_MASTER} 再跑, "
-        f"或用环境变量 MDSTUDIO_ENV 指向别的位置.")
+    # 换代时先整目录改名再删: rename 是目录级操作, 不会被逐文件删盘保护拦下,
+    # 也就不会出现"旧的删一半, 新的还没来, dist 只剩半个"的半残状态。
+    # 暂存名放在 DIST 外面, 就算最后删不掉也不会被压进 zip。
+    trash = ROOT / "dist" / "python_old_tmp"
+    if trash.exists():
+        shutil.rmtree(trash, ignore_errors=True)
+    if dst.exists():
+        try:
+            dst.rename(trash)
+        except OSError:
+            shutil.rmtree(dst, ignore_errors=True)
+    print(f"搬随包 Python <- {PY_MASTER}  {dir_size_mb(PY_MASTER):.0f} MB, 稍等…")
+    shutil.copytree(PY_MASTER, dst)
+    if trash.exists():
+        shutil.rmtree(trash, ignore_errors=True)   # 新的已就位, 旧的删不掉也不碍事
 
 
 adopt_local_state()
@@ -197,30 +227,38 @@ shutil.copytree(CORE_SRC, DIST / "core" / "mdstudio", dirs_exist_ok=True,
 # 所以 tools/ 要跟 core/ 平级, 引擎才找得到
 if TOOLS_SRC.is_dir():
     print("收集随包资源 (tools) …")
+    skip = list(TOOLS_SKIP) + (["matting", "realesrgan", "spineconv"] if slim else [])
     shutil.copytree(TOOLS_SRC, DIST / "tools", dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns("__pycache__", *TOOLS_SKIP))
+                    ignore=shutil.ignore_patterns("__pycache__", *skip))
 
 # ---------------------------------------------------------------- 4b. 抠像模型
-# 引擎 matting_model_path() 的查找顺序: 环境变量 > ~/.u2net > 程序目录/tools/matting。
-# 不打进包的话, 对方第一次用 AI 抠像就要现下 176MB, 那就不叫解压即用了。
+# 引擎 matting_model_path() 只认: 环境变量 > 程序目录/tools/matting（2026-11-16 起
+# 不再退回 ~/.u2net，避免"设置页说没装、生成却跑得动"）。
+# 所以瘦身包里不塞模型: 用户首次用到时在设置页下，落在同一个位置。
+# 加 --full 才带；那时允许从本机缓存里找一份，纯粹是省一次重复下载。
 print("收集抠像模型 (tools/matting) …")
 MODEL_NAME = "isnet-anime.onnx"
-model_candidates = []
-env_model = os.environ.get("MDSTUDIO_MATTING_MODEL")
-if env_model:
-    model_candidates.append(Path(env_model))
-model_candidates += [Path.home() / ".u2net" / MODEL_NAME,
-                     TOOLS_SRC / "matting" / MODEL_NAME,
-                     DIST / "tools" / "matting" / MODEL_NAME]
-src_model = next((p for p in model_candidates if p and p.is_file()), None)
-if src_model is None:
-    raise SystemExit(f"找不到 {MODEL_NAME}。先跑一次抠像让它自己下, 或者手动放进 {TOOLS_SRC / 'matting'}")
 matting_dir = DIST / "tools" / "matting"
-matting_dir.mkdir(parents=True, exist_ok=True)
-dst_model = matting_dir / MODEL_NAME
-if not dst_model.is_file() or dst_model.stat().st_size != src_model.stat().st_size:
-    shutil.copy2(src_model, dst_model)
-print(f"   {MODEL_NAME}  {dst_model.stat().st_size / 1024 / 1024:.0f} MB  <- {src_model}")
+if slim:
+    print("   默认不带额外组件：跳过（用户首次用到时下载）")
+    matting_dir.mkdir(parents=True, exist_ok=True)
+    src_model = None
+else:
+    model_candidates = []
+    env_model = os.environ.get("MDSTUDIO_MATTING_MODEL")
+    if env_model:
+        model_candidates.append(Path(env_model))
+    model_candidates += [Path.home() / ".u2net" / MODEL_NAME,
+                         TOOLS_SRC / "matting" / MODEL_NAME,
+                         DIST / "tools" / "matting" / MODEL_NAME]
+    src_model = next((p for p in model_candidates if p and p.is_file()), None)
+    if src_model is None:
+        raise SystemExit(f"找不到 {MODEL_NAME}。先跑一次抠像让它自己下, 或者手动放进 {TOOLS_SRC / 'matting'}")
+    matting_dir.mkdir(parents=True, exist_ok=True)
+    dst_model = matting_dir / MODEL_NAME
+    if not dst_model.is_file() or dst_model.stat().st_size != src_model.stat().st_size:
+        shutil.copy2(src_model, dst_model)
+    print(f"   {MODEL_NAME}  {dst_model.stat().st_size / 1024 / 1024:.0f} MB  <- {src_model}")
 
 # ---------------------------------------------------------------- 4c. VC 运行库
 # python\ 里有 vcruntime140*.dll (Python 自带的), 但没有 msvcp140*.dll。
@@ -266,14 +304,33 @@ if not no_zip:
     print("\n压缩…")
     if ZIP.exists():
         ZIP.unlink()
-    # 用户数据与本地环境不该进包: data/config 是运行时生成的, .pyenv 是本地装的
-    skip_dirs = {"data", "config", ".pyenv", "__pycache__"}
+    # data/config/.pyenv/.download 只会出现在程序根。按名字全局剪会误伤树里
+    # 任何位置的同名目录（比如以后 core 下加个 data/），所以只在顶层剪它们，
+    # 更深的目录只剪编译缓存。
+    root_only = {"data", "config", ".pyenv", ".download"}
+    # tools/ 现在跨版本保留（见 KEEP_LOCAL），里面可能有用户下过的组件。
+    # 瘦身包不能把这几样再压进去，否则包会从 260MB 涨到 480MB, 也违背「按需下载」。
+    # --full 时反过来: 那个包就是要带上它们。
+    fat_dirs = set() if not slim else {"matting", "realesrgan", "spineconv"}
     with zipfile.ZipFile(ZIP, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for root, dirs, files in os.walk(DIST):
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            if os.path.normcase(root) == os.path.normcase(str(DIST)):
+                dirs[:] = [d for d in dirs
+                           if d not in root_only and d != "__pycache__"]
+            elif os.path.normcase(root) == os.path.normcase(str(DIST / "tools")):
+                dirs[:] = [d for d in dirs if d != "__pycache__" and d not in fat_dirs]
+            else:
+                dirs[:] = [d for d in dirs if d != "__pycache__"]
             for f in files:
                 if f.endswith((".pyc", ".pyo")):
                     continue
                 full = Path(root) / f
                 zf.write(full, full.relative_to(DIST.parent).as_posix())
     print(f"写出 {ZIP}  {ZIP.stat().st_size / 1024 / 1024:.0f} MB")
+
+if not keep_dir and not no_zip and DIST.is_dir():
+    shutil.rmtree(DIST, ignore_errors=True)
+    if DIST.is_dir():
+        print(f"⚠ 解压目录没删干净（可能被杀软或沙箱占用），可手动删除：{DIST}")
+    else:
+        print("已删除解压目录（要保留请加 --keep-dir）")

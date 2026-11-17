@@ -14,6 +14,11 @@ class AssetMissing(MDStudioError):
     pass
 
 
+class AssetInterrupted(MDStudioError):
+    """下载中途断了。已下的残片还留着，用户可以再点一次接着下。
+    单独一类是为了让界面知道该不该说「再点一次就能续」，不靠匹配文案。"""
+
+
 class NotOurs(MDStudioError):
     """卡不是我们加的 (官方自带或别的工具), 不敢动"""
 

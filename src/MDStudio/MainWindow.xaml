@@ -57,7 +57,6 @@
             <NavigationView.MenuItems>
                 <NavigationViewItem
                     Content="卡图"
-                    IsSelected="True"
                     Tag="cardart">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8B9;" />
@@ -71,7 +70,7 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem
-                    Content="动画"
+                    Content="动画与特效"
                     Tag="anim">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE714;" />
@@ -92,7 +91,44 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
-            <Frame x:Name="NavFrame" />
+            <Grid>
+                <Frame x:Name="NavFrame" />
+
+                <!--
+                    没有可用账号（或找不到游戏目录）时，内容区换成这一屏。
+                    不是执行动作时那个带转圈的遮罩：它常驻、不挡动作、也不会自己消失。
+                    放在 Frame 这一层而不是每个页面各写一个，六页只需维护一处。
+                    背景保持透明，底下直接是 Mica，和其它页面同一种底；被挡时把 Frame
+                    整个收起来，避免旧内容透出来。
+                -->
+                <Grid
+                    x:Name="AccountBlock"
+                    Visibility="Collapsed">
+                    <StackPanel
+                        MaxWidth="400"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="10">
+                        <TextBlock
+                            x:Name="BlockTitle"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource SubtitleTextBlockStyle}"
+                            Text="还没有选择账号" />
+                        <TextBlock
+                            x:Name="BlockBody"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                        <Button
+                            x:Name="BlockGo"
+                            Margin="0,6,0,0"
+                            HorizontalAlignment="Center"
+                            Click="BlockGo_Click"
+                            Content="去设置选择"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
         </NavigationView>
     </Grid>
 </Window>

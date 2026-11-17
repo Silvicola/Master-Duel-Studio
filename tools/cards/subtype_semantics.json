@@ -1,0 +1,799 @@
+{
+  "version": 1,
+  "note": "subtype 是 CARD_Prop bit16..21 的 6 位原始码；本表只提供语义，不参与判定。frame_type -> frame_png 来自 data.unity3d 的 card_frameNN 资源编号。",
+  "coarse_names": {
+    "normal": "通常",
+    "effect": "效果",
+    "fusion": "融合",
+    "ritual": "仪式",
+    "synchro": "同步",
+    "xyz": "超量",
+    "pendulum": "灵摆",
+    "link": "连接",
+    "spell": "魔法",
+    "trap": "陷阱"
+  },
+  "frame_png_map": {
+    "0": 0,
+    "1": 1,
+    "2": 3,
+    "3": 2,
+    "7": 10,
+    "8": 12,
+    "9": 7,
+    "10": 8,
+    "12": 9,
+    "13": 13,
+    "14": 14,
+    "15": 17,
+    "16": 19,
+    "17": 16,
+    "18": 18,
+    "19": 15
+  },
+  "subtypes": {
+    "0": {
+      "en": "Normal Monster",
+      "cn": "通常怪兽",
+      "solver": "Normal",
+      "coarse": "normal",
+      "coarse_cn": "通常",
+      "frame_type": 0,
+      "frame_png": 0,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "1": {
+      "en": "Effect",
+      "cn": "效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "2": {
+      "en": "Fusion (non-Effect)",
+      "cn": "融合（无效果）",
+      "solver": "Fusion",
+      "coarse": "fusion",
+      "coarse_cn": "融合",
+      "frame_type": 2,
+      "frame_png": 3,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "3": {
+      "en": "Fusion/Effect",
+      "cn": "融合／效果",
+      "solver": "Fusion",
+      "coarse": "fusion",
+      "coarse_cn": "融合",
+      "frame_type": 2,
+      "frame_png": 3,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "4": {
+      "en": "Ritual (non-Effect)",
+      "cn": "仪式（无效果）",
+      "solver": "Ritual",
+      "coarse": "ritual",
+      "coarse_cn": "仪式",
+      "frame_type": 3,
+      "frame_png": 2,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "5": {
+      "en": "Ritual/Effect",
+      "cn": "仪式／效果",
+      "solver": "Ritual",
+      "coarse": "ritual",
+      "coarse_cn": "仪式",
+      "frame_type": 3,
+      "frame_png": 2,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "6": {
+      "en": "Toon/Effect",
+      "cn": "卡通／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "卡通"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "7": {
+      "en": "Spirit/Effect",
+      "cn": "灵魂／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "灵魂"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "8": {
+      "en": "Union/Effect",
+      "cn": "同盟／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "同盟"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "9": {
+      "en": "Gemini/Effect",
+      "cn": "二重／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "二重"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "10": {
+      "en": "Token (non-Effect)",
+      "cn": "衍生物（无效果）",
+      "solver": "Token",
+      "coarse": "normal",
+      "coarse_cn": "通常",
+      "frame_type": 12,
+      "frame_png": 9,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "11": {
+      "en": "Effect (?)",
+      "cn": "效果（未确认）",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "12": {
+      "en": "Effect (?)",
+      "cn": "效果（未确认）",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "13": {
+      "en": "Spell",
+      "cn": "魔法卡",
+      "solver": "Spell",
+      "coarse": "spell",
+      "coarse_cn": "魔法",
+      "frame_type": 9,
+      "frame_png": 7,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "14": {
+      "en": "Trap",
+      "cn": "陷阱卡",
+      "solver": "Trap",
+      "coarse": "trap",
+      "coarse_cn": "陷阱",
+      "frame_type": 10,
+      "frame_png": 8,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "15": {
+      "en": "Tuner/Normal",
+      "cn": "协调／通常",
+      "solver": "Normal",
+      "coarse": "normal",
+      "coarse_cn": "通常",
+      "frame_type": 0,
+      "frame_png": 0,
+      "abilities": [
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "16": {
+      "en": "Tuner/Effect",
+      "cn": "协调／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "17": {
+      "en": "Synchro (non-Effect)",
+      "cn": "同调（无效果）",
+      "solver": "Synchro",
+      "coarse": "synchro",
+      "coarse_cn": "同步",
+      "frame_type": 7,
+      "frame_png": 10,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "18": {
+      "en": "Synchro/Effect",
+      "cn": "同调／效果",
+      "solver": "Synchro",
+      "coarse": "synchro",
+      "coarse_cn": "同步",
+      "frame_type": 7,
+      "frame_png": 10,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "19": {
+      "en": "Synchro/Tuner/Effect",
+      "cn": "同调／协调／效果",
+      "solver": "Synchro",
+      "coarse": "synchro",
+      "coarse_cn": "同步",
+      "frame_type": 7,
+      "frame_png": 10,
+      "abilities": [
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "20": {
+      "en": "Dark Tuner/Effect",
+      "cn": "暗黑协调／效果",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "21": {
+      "en": "Dark Synchro/Effect",
+      "cn": "暗黑同调／效果",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "22": {
+      "en": "Xyz (non-Effect)",
+      "cn": "超量（无效果）",
+      "solver": "Xyz",
+      "coarse": "xyz",
+      "coarse_cn": "超量",
+      "frame_type": 8,
+      "frame_png": 12,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "23": {
+      "en": "Xyz/Effect",
+      "cn": "超量／效果",
+      "solver": "Xyz",
+      "coarse": "xyz",
+      "coarse_cn": "超量",
+      "frame_type": 8,
+      "frame_png": 12,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "24": {
+      "en": "Flip/Effect",
+      "cn": "翻转／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "翻转"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "25": {
+      "en": "Pendulum/Normal",
+      "cn": "灵摆／通常",
+      "solver": "Normal",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 13,
+      "frame_png": 13,
+      "abilities": [
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "26": {
+      "en": "Pendulum/Effect",
+      "cn": "灵摆／效果",
+      "solver": "Effect",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 14,
+      "frame_png": 14,
+      "abilities": [
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "27": {
+      "en": "Nomi/Effect",
+      "cn": "特殊召唤／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "特殊召唤"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "28": {
+      "en": "Nomi/Toon/Effect",
+      "cn": "特殊召唤／卡通／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "卡通",
+        "特殊召唤"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "29": {
+      "en": "Nomi/Spirit/Effect",
+      "cn": "特殊召唤／灵魂／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "灵魂",
+        "特殊召唤"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "30": {
+      "en": "Nomi/Tuner/Effect",
+      "cn": "特殊召唤／协调／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "协调",
+        "特殊召唤"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "31": {
+      "en": "Nomi/Dark Tuner/Effect",
+      "cn": "特殊召唤／暗黑协调／效果",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [
+        "协调",
+        "特殊召唤"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "32": {
+      "en": "Flip/Tuner/Effect",
+      "cn": "翻转／协调／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "协调",
+        "翻转"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "33": {
+      "en": "Pendulum/Effect/Tuner",
+      "cn": "灵摆／效果／协调",
+      "solver": "Effect",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 14,
+      "frame_png": 14,
+      "abilities": [
+        "协调",
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "34": {
+      "en": "Xyz/Pendulum/Effect",
+      "cn": "超量／灵摆／效果",
+      "solver": "Xyz",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 19,
+      "frame_png": 15,
+      "abilities": [
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "35": {
+      "en": "Pendulum/Flip/Effect",
+      "cn": "灵摆／翻转／效果",
+      "solver": "Effect",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 14,
+      "frame_png": 14,
+      "abilities": [
+        "翻转",
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "36": {
+      "en": "Synchro/Pendulum/Effect",
+      "cn": "同调／灵摆／效果",
+      "solver": "Synchro",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 17,
+      "frame_png": 16,
+      "abilities": [
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "37": {
+      "en": "Union/Tuner/Effect",
+      "cn": "同盟／协调／效果",
+      "solver": "Effect",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": 1,
+      "frame_png": 1,
+      "abilities": [
+        "同盟",
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "38": {
+      "en": "Ritual/Spirit/Effect",
+      "cn": "仪式／灵魂／效果",
+      "solver": "Ritual",
+      "coarse": "ritual",
+      "coarse_cn": "仪式",
+      "frame_type": 3,
+      "frame_png": 2,
+      "abilities": [
+        "灵魂"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "39": {
+      "en": "Fusion/Tuner (non-Effect)",
+      "cn": "融合／协调（无效果）",
+      "solver": "Fusion",
+      "coarse": "fusion",
+      "coarse_cn": "融合",
+      "frame_type": 2,
+      "frame_png": 3,
+      "abilities": [
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "40": {
+      "en": "Nomi/Pendulum/Effect",
+      "cn": "特殊召唤／灵摆／效果",
+      "solver": "Effect",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 14,
+      "frame_png": 14,
+      "abilities": [
+        "特殊召唤",
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "41": {
+      "en": "Fusion/Pendulum/Effect",
+      "cn": "融合／灵摆／效果",
+      "solver": "Fusion",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 15,
+      "frame_png": 17,
+      "abilities": [
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "42": {
+      "en": "Link (non-Effect)",
+      "cn": "连接（无效果）",
+      "solver": "Link",
+      "coarse": "link",
+      "coarse_cn": "连接",
+      "frame_type": 18,
+      "frame_png": 18,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "43": {
+      "en": "Link/Effect",
+      "cn": "连接／效果",
+      "solver": "Link",
+      "coarse": "link",
+      "coarse_cn": "连接",
+      "frame_type": 18,
+      "frame_png": 18,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "44": {
+      "en": "Pendulum/Tuner/Normal",
+      "cn": "灵摆／协调／通常",
+      "solver": "Normal",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 13,
+      "frame_png": 13,
+      "abilities": [
+        "协调",
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "45": {
+      "en": "Pendulum/Spirit/Effect",
+      "cn": "灵摆／灵魂／效果",
+      "solver": "Effect",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 14,
+      "frame_png": 14,
+      "abilities": [
+        "灵魂",
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "46": {
+      "en": "Maximum/Effect",
+      "cn": "极限／效果",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "47": {
+      "en": "Ritual/Tuner/Effect",
+      "cn": "仪式／协调／效果",
+      "solver": "Ritual",
+      "coarse": "ritual",
+      "coarse_cn": "仪式",
+      "frame_type": 3,
+      "frame_png": 2,
+      "abilities": [
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "48": {
+      "en": "Fusion/Tuner/Effect",
+      "cn": "融合／协调／效果",
+      "solver": "Fusion",
+      "coarse": "fusion",
+      "coarse_cn": "融合",
+      "frame_type": 2,
+      "frame_png": 3,
+      "abilities": [
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "49": {
+      "en": "Token/Tuner (non-Effect)",
+      "cn": "衍生物／协调（无效果）",
+      "solver": "Token",
+      "coarse": "normal",
+      "coarse_cn": "通常",
+      "frame_type": 12,
+      "frame_png": 9,
+      "abilities": [
+        "协调"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "50": {
+      "en": "Fusion (non-Effect, Rush Duel)",
+      "cn": "融合（无效果）",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "51": {
+      "en": "Fusion/Effect (Rush Duel)",
+      "cn": "融合／效果（超速决斗）",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "52": {
+      "en": "Ritual/Pendulum/Effect",
+      "cn": "仪式／灵摆／效果",
+      "solver": "Ritual",
+      "coarse": "pendulum",
+      "coarse_cn": "灵摆",
+      "frame_type": 16,
+      "frame_png": 19,
+      "abilities": [
+        "灵摆"
+      ],
+      "pendulum": true,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "53": {
+      "en": "Ritual/Flip/Effect",
+      "cn": "仪式／翻转／效果",
+      "solver": "Ritual",
+      "coarse": "ritual",
+      "coarse_cn": "仪式",
+      "frame_type": 3,
+      "frame_png": 2,
+      "abilities": [
+        "翻转"
+      ],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "54": {
+      "en": "Ritual (non-Effect, Rush Duel)",
+      "cn": "仪式（无效果）",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "55": {
+      "en": "Ritual/Effect (Rush Duel)",
+      "cn": "仪式／效果（超速决斗）",
+      "solver": "unknown",
+      "coarse": "effect",
+      "coarse_cn": "效果",
+      "frame_type": null,
+      "frame_png": null,
+      "abilities": [],
+      "pendulum": false,
+      "source": "PDF p5-6 + Card Decoder Solver + 游戏筛选菜单"
+    },
+    "56": {
+      "en": "Toon/Fusion",
+      "cn": "卡通／融合",
+      "solver": "Fusion",
+      "coarse": "fusion",
+      "coarse_cn": "融合",
+      "frame_type": 2,
+      "frame_png": 3,
+      "abilities": [
+        "卡通"
+      ],
+      "pendulum": false,
+      "source": "人工补充：游戏筛选菜单「卡通」能力 + 描述为融合素材 + 旧版 CARD_Prop 佐证"
+    }
+  }
+}

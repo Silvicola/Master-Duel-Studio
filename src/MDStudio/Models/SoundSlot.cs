@@ -13,8 +13,21 @@ public sealed class SoundSlot
     public string Name { get; init; } = "";
     public List<int> Cards { get; init; } = new();
 
+    /// <summary>
+    /// 同名槽的区分后缀（如 R / P / v2）。
+    /// 同一张卡的两条记录可能各用一个槽，只看「卡名 #编号」会显示成两行一模一样的。
+    /// </summary>
+    public string Suffix { get; init; } = "";
+
     /// <summary>界面上用「卡名 #编号」指代。SE_EV_ 那串内部名只在查不到卡时才露出来。</summary>
-    public string CardText => Cards.Count > 0 ? $"{Name} #{Cards[0]}".Trim() : Label;
+    public string CardText
+    {
+        get
+        {
+            var head = Cards.Count > 0 ? $"{Name} #{Cards[0]}".Trim() : Label;
+            return Suffix.Length > 0 ? $"{head} · {Suffix}" : head;
+        }
+    }
 
     /// <summary>下拉框里的一行：谁在用 + 能不能换。</summary>
     public string Text => OnDisk

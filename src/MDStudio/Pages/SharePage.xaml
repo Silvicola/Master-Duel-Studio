@@ -8,29 +8,103 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid>
+    <Page.Resources>
+        <!--
+            预览弹窗里的一行。弹窗内容在代码里拼（要带勾选与状态），
+            行模板放这里，代码用 Resources["PreviewRowTemplate"] 取。
+        -->
+        <DataTemplate x:Key="PreviewRowTemplate" x:DataType="models:PackPreviewItem">
+            <StackPanel Spacing="2">
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="148" />
+                    <ColumnDefinition Width="148" />
+                    <ColumnDefinition Width="148" />
+                </Grid.ColumnDefinitions>
+                <TextBlock
+                    Grid.Column="0"
+                    VerticalAlignment="Center"
+                    Text="{x:Bind Label}"
+                    TextTrimming="CharacterEllipsis" />
+                <StackPanel
+                    Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="6">
+                    <CheckBox
+                        MinWidth="0"
+                        Content="动画"
+                        IsChecked="{x:Bind Cutin, Mode=TwoWay}"
+                        IsEnabled="{x:Bind CutinEnabled}" />
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        FontSize="12"
+                        Opacity="0.6"
+                        Text="{x:Bind CutinTag}" />
+                </StackPanel>
+                <StackPanel
+                    Grid.Column="2"
+                    Orientation="Horizontal"
+                    Spacing="6">
+                    <CheckBox
+                        MinWidth="0"
+                        Content="特效"
+                        IsChecked="{x:Bind Runfx, Mode=TwoWay}"
+                        IsEnabled="{x:Bind RunfxEnabled}" />
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        FontSize="12"
+                        Opacity="0.6"
+                        Text="{x:Bind RunfxTag}" />
+                </StackPanel>
+                <StackPanel
+                    Grid.Column="3"
+                    Orientation="Horizontal"
+                    Spacing="6">
+                    <CheckBox
+                        MinWidth="0"
+                        Content="超框"
+                        IsChecked="{x:Bind Art, Mode=TwoWay}"
+                        IsEnabled="{x:Bind ArtEnabled}" />
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        FontSize="12"
+                        Opacity="0.6"
+                        Text="{x:Bind ArtTag}" />
+                </StackPanel>
+            </Grid>
+            <TextBlock
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="{x:Bind BlockNote}"
+                TextWrapping="Wrap"
+                Visibility="{x:Bind BlockVisibility}" />
+            </StackPanel>
+        </DataTemplate>
+    </Page.Resources>
+
+    <!--
+        顶部不放大标题：导航栏已经写着「分享」，再来一行 28px 大字只是把内容往下推。
+        第一行固定 55，说明句压在这条留白带里靠下，面板顶边就落在和卡图页、
+        动画页同一条线上，切页时不会上下跳。
+    -->
+    <Grid Padding="24,0,24,24">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="55" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!--  标题  -->
-        <StackPanel Grid.Row="0" Padding="20,16,20,4" Spacing="4">
-            <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="整合包" />
-            <TextBlock
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Style="{StaticResource CaptionTextBlockStyle}"
-                Text="把你做过的卡打包分享给别人，或安装别人做好的整合包。" />
-        </StackPanel>
+        <TextBlock
+            Grid.Row="0"
+            Margin="0,0,0,10"
+            VerticalAlignment="Bottom"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Style="{StaticResource CaptionTextBlockStyle}"
+            Text="把你做过的卡打包分享给别人，或安装别人做好的整合包。" />
 
-        <!--
-            内容：左「导出」，右侧上下分「查看」「安装」。
-            三块都用 PanelCard 样式，与卡片页两个主面板同一套边缘处理（不透明底 + 描边 + 柔和投影）。
-        -->
         <Grid
             Grid.Row="1"
-            Padding="16,6,16,10"
             ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -39,7 +113,6 @@
 
             <!--  左：导出  -->
             <ContentControl Grid.Column="0" Style="{StaticResource PanelCard}">
-                <!--  内容从上往下排，不留中间空洞；列表给上限，卡多了自己滚  -->
                 <Grid RowSpacing="8" VerticalAlignment="Top">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -53,50 +126,67 @@
                     <TextBlock
                         Grid.Row="0"
                         Style="{StaticResource BodyStrongTextBlockStyle}"
-                        Text="导出" />
+                        Text="导出整合包" />
                     <TextBlock
                         Grid.Row="1"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Style="{StaticResource CaptionTextBlockStyle}"
-                        Text="勾选要打包的卡，导出成压缩包或文件夹，发给别人即可安装。"
+                        Text="勾选每张卡要打包的内容。动画、特效、超框可各选；音效不在整合包里，装到的卡会用对方机器上的声音。"
                         TextWrapping="Wrap" />
+
+                    <TextBox
+                        x:Name="ExportSearchBox"
+                        Grid.Row="2"
+                        PlaceholderText="按卡名或卡号搜索"
+                        TextChanged="ExportSearchBox_TextChanged" />
+
                     <TextBlock
                         x:Name="ExportEmpty"
-                        Grid.Row="2"
+                        Grid.Row="3"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Style="{StaticResource CaptionTextBlockStyle}"
                         Text="你还没有做过任何改动，暂无可导出的卡。"
+                        TextWrapping="Wrap"
                         Visibility="Collapsed" />
 
                     <ListView
                         x:Name="ExportList"
                         Grid.Row="3"
-                        MaxHeight="280"
+                        MaxHeight="300"
                         ScrollViewer.VerticalScrollBarVisibility="Visible"
                         SelectionMode="None">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="models:PackCardItem">
                                 <Grid Padding="0,2" ColumnSpacing="8">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <CheckBox
-                                        Grid.Column="0"
-                                        MinWidth="0"
-                                        VerticalAlignment="Center"
-                                        IsChecked="{x:Bind IsChecked, Mode=TwoWay}" />
                                     <TextBlock
-                                        Grid.Column="1"
+                                        Grid.Column="0"
                                         VerticalAlignment="Center"
                                         Text="{x:Bind Label}"
                                         TextTrimming="CharacterEllipsis" />
-                                    <TextBlock
+                                    <CheckBox
+                                        Grid.Column="1"
+                                        MinWidth="0"
+                                        Content="动画"
+                                        IsChecked="{x:Bind Cutin, Mode=TwoWay}"
+                                        IsEnabled="{x:Bind HasCutin}" />
+                                    <CheckBox
                                         Grid.Column="2"
-                                        VerticalAlignment="Center"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                        Text="{x:Bind Kinds}" />
+                                        MinWidth="0"
+                                        Content="特效"
+                                        IsChecked="{x:Bind Runfx, Mode=TwoWay}"
+                                        IsEnabled="{x:Bind HasRunfx}" />
+                                    <CheckBox
+                                        Grid.Column="3"
+                                        MinWidth="0"
+                                        Content="超框"
+                                        IsChecked="{x:Bind Art, Mode=TwoWay}"
+                                        IsEnabled="{x:Bind HasArt}" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -111,38 +201,35 @@
                             x:Name="PackNameBox"
                             Grid.Column="0"
                             Header="包名"
-                            PlaceholderText="my-pack" />
-                        <ComboBox
-                            x:Name="FormatBox"
+                            PlaceholderText="导出" />
+                        <Button
+                            x:Name="ExportBtn"
                             Grid.Column="1"
                             VerticalAlignment="Bottom"
-                            Header="格式"
-                            SelectedIndex="0">
-                            <x:String>ZIP 压缩包</x:String>
-                            <x:String>文件夹</x:String>
-                        </ComboBox>
+                            Click="ExportBtn_Click"
+                            Content="选择位置并导出"
+                            Style="{StaticResource AccentButtonStyle}" />
                     </Grid>
-                    <Button
-                        x:Name="ExportBtn"
+
+                    <TextBlock
+                        x:Name="ExportHint"
                         Grid.Row="5"
-                        HorizontalAlignment="Left"
-                        Click="ExportBtn_Click"
-                        Content="导出" />
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextWrapping="Wrap" />
                 </Grid>
             </ContentControl>
 
-            <!--  右：上「查看」下「安装」  -->
+            <!--  右：导入 + 装过的包  -->
             <Grid Grid.Column="1" RowSpacing="12">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!--  查看  -->
                 <ContentControl Grid.Row="0" Style="{StaticResource PanelCard}">
                     <Grid RowSpacing="8" VerticalAlignment="Top">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -152,12 +239,12 @@
                         <TextBlock
                             Grid.Row="0"
                             Style="{StaticResource BodyStrongTextBlockStyle}"
-                            Text="查看" />
+                            Text="导入整合包" />
                         <TextBlock
                             Grid.Row="1"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Style="{StaticResource CaptionTextBlockStyle}"
-                            Text="先选一个整合包，看看里面有哪些卡、哪些类型，再决定要不要安装。"
+                            Text="选一个本工具导出的压缩包，预览里挑好再装，取消就是只看。"
                             TextWrapping="Wrap" />
 
                         <Grid Grid.Row="2" ColumnSpacing="8">
@@ -166,104 +253,76 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBox
-                                x:Name="InspectPathBox"
+                                x:Name="PackPathBox"
                                 Grid.Column="0"
                                 Header="整合包"
                                 IsReadOnly="True"
                                 PlaceholderText="未选择" />
-                            <StackPanel
+                            <Button
+                                x:Name="PackBrowseBtn"
                                 Grid.Column="1"
                                 VerticalAlignment="Bottom"
-                                Orientation="Horizontal"
-                                Spacing="6">
-                                <Button
-                                    x:Name="InspectBrowseBtn"
-                                    Click="InspectBrowseBtn_Click"
-                                    Content="选择文件" />
-                                <Button
-                                    x:Name="InspectBrowseDirBtn"
-                                    Click="InspectBrowseDir_Click"
-                                    Content="选择文件夹" />
-                            </StackPanel>
+                                Click="PackBrowseBtn_Click"
+                                Content="选择压缩包" />
                         </Grid>
 
-                        <Button
-                            x:Name="InspectBtn"
+                        <StackPanel
                             Grid.Row="3"
-                            HorizontalAlignment="Left"
-                            Click="InspectBtn_Click"
-                            Content="查看" />
-
-                        <!--  查看结果主要走弹出框, 这里留一行摘要, 关掉弹窗后也知道刚才看了什么  -->
-                        <TextBlock
-                            x:Name="InspectSummary"
-                            Grid.Row="4"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Style="{StaticResource CaptionTextBlockStyle}"
-                            TextWrapping="Wrap"
-                            Visibility="Collapsed" />
+                            Orientation="Horizontal"
+                            Spacing="8">
+                            <Button
+                                x:Name="InstallBtn"
+                                Click="InstallBtn_Click"
+                                Content="预览并安装"
+                                Style="{StaticResource AccentButtonStyle}" />
+                        </StackPanel>
                     </Grid>
                 </ContentControl>
 
-                <!--  安装  -->
                 <ContentControl Grid.Row="1" Style="{StaticResource PanelCard}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="安装" />
+                    <Grid RowSpacing="8" VerticalAlignment="Top">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
                         <TextBlock
+                            Grid.Row="0"
+                            Style="{StaticResource BodyStrongTextBlockStyle}"
+                            Text="装过的包" />
+                        <TextBlock
+                            x:Name="InstalledEmpty"
+                            Grid.Row="1"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Style="{StaticResource CaptionTextBlockStyle}"
-                            Text="选一个本工具导出的整合包。只接受本工具自己的卡条目，游戏文件不会被改动。"
+                            Text="还没有装过别人做的包。"
                             TextWrapping="Wrap" />
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox
-                                x:Name="InstallPathBox"
-                                Grid.Column="0"
-                                Header="整合包"
-                                IsReadOnly="True"
-                                PlaceholderText="未选择" />
-                            <StackPanel
-                                Grid.Column="1"
-                                VerticalAlignment="Bottom"
-                                Orientation="Horizontal"
-                                Spacing="6">
-                                <Button
-                                    x:Name="InstallBrowseBtn"
-                                    Click="InstallBrowseBtn_Click"
-                                    Content="选择文件" />
-                                <Button
-                                    x:Name="InstallBrowseDirBtn"
-                                    Click="InstallBrowseDir_Click"
-                                    Content="选择文件夹" />
-                            </StackPanel>
-                        </Grid>
-                        <!--  勾选项与安装按钮同一行, 省一截高度留给「查看」  -->
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel
-                                VerticalAlignment="Center"
-                                Orientation="Horizontal"
-                                Spacing="16">
-                                <CheckBox
-                                    x:Name="SkipExistingBox"
-                                    Content="跳过已安装的卡"
-                                    IsChecked="True" />
-                                <CheckBox x:Name="ReplaceBox" Content="覆盖已有" />
-                            </StackPanel>
-                            <Button
-                                x:Name="InstallBtn"
-                                Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Click="InstallBtn_Click"
-                                Content="安装" />
-                        </Grid>
-                    </StackPanel>
+
+                        <ListView
+                            x:Name="InstalledList"
+                            Grid.Row="1"
+                            MaxHeight="220"
+                            ScrollViewer.VerticalScrollBarVisibility="Visible"
+                            SelectionMode="None"
+                            Visibility="Collapsed">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="models:PackInstalledItem">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="{x:Bind When}" />
+                                        <TextBlock
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="{x:Bind Summary}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
                 </ContentControl>
             </Grid>
         </Grid>

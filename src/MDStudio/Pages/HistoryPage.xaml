@@ -15,125 +15,207 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!--  标题  -->
+        <!--  页头，和其他页同一套排版  -->
         <StackPanel Grid.Row="0" Padding="20,16,20,4" Spacing="4">
             <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="历史" />
             <TextBlock
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 Style="{StaticResource CaptionTextBlockStyle}"
-                Text="这个工具做过的所有改动。撤销会连带撤掉建在它上面的后续改动。" />
+                Text="以卡为单位的三类改动与复原记录，按时间从新到旧。视频与 Spine 是召唤动画的两种导入方式。" />
         </StackPanel>
 
-        <!--  记录列表与操作  -->
         <Grid Grid.Row="1" Padding="20,8,20,8" RowSpacing="10">
             <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <ListView
-                x:Name="HistoryList"
-                Grid.Row="0"
-                SelectionMode="Single">
-                <ListView.ItemTemplate>
-                    <DataTemplate x:DataType="models:HistoryItem">
-                        <Grid
-                            Padding="0,6"
-                            ColumnSpacing="16"
-                            ToolTipService.ToolTip="{x:Bind Tip}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="130" />
-                                <ColumnDefinition Width="150" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock
-                                Grid.Column="0"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind Time}"
-                                VerticalAlignment="Center" />
-                            <TextBlock
-                                Grid.Column="1"
-                                Text="{x:Bind OpText}"
-                                VerticalAlignment="Center" />
-                            <TextBlock
-                                Grid.Column="2"
-                                Text="{x:Bind CardText}"
-                                VerticalAlignment="Center" />
-                            <TextBlock
-                                Grid.Column="3"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Text="{x:Bind From}"
-                                VerticalAlignment="Center" />
-                        </Grid>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
-
-            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
-                <Button
-                    x:Name="UndoSelectedBtn"
-                    Click="UndoSelected_Click"
-                    Content="撤销选中的" />
-                <Button
-                    x:Name="UndoLastBtn"
-                    Click="UndoLast_Click"
-                    Content="撤销最近一条" />
+            <!--  工具条：类别筛选、计数、刷新、复制日志  -->
+            <Grid Grid.Row="0" ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel
+                    Grid.Column="0"
+                    Orientation="Horizontal"
+                    Spacing="6">
+                    <Button
+                        x:Name="ChipAll"
+                        Click="Filter_Changed"
+                        Content="全部"
+                        CornerRadius="6"
+                        FontSize="12"
+                        Padding="14,5"
+                        Tag="all" />
+                    <Button
+                        x:Name="ChipArt"
+                        Click="Filter_Changed"
+                        Content="超框"
+                        CornerRadius="6"
+                        FontSize="12"
+                        Padding="14,5"
+                        Tag="art" />
+                    <Button
+                        x:Name="ChipCutin"
+                        Click="Filter_Changed"
+                        Content="动画"
+                        CornerRadius="6"
+                        FontSize="12"
+                        Padding="14,5"
+                        Tag="cutin" />
+                    <Button
+                        x:Name="ChipRunfx"
+                        Click="Filter_Changed"
+                        Content="特效"
+                        CornerRadius="6"
+                        FontSize="12"
+                        Padding="14,5"
+                        Tag="runfx" />
+                </StackPanel>
                 <TextBlock
+                    x:Name="CountText"
+                    Grid.Column="1"
                     VerticalAlignment="Center"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Style="{StaticResource CaptionTextBlockStyle}"
-                    Text="撤销不可逆。同一张卡上建在它后面的改动会一起被撤掉。" />
-            </StackPanel>
+                    Text="共 0 条" />
+                <Button
+                    Grid.Column="2"
+                    Click="Refresh_Click"
+                    Content="刷新" />
+                <Button
+                    Grid.Column="3"
+                    Click="CopyLog_Click"
+                    Content="复制日志" />
+            </Grid>
+
+            <Grid Grid.Row="1">
+                <ListView
+                    x:Name="HistoryList"
+                    SelectionMode="None">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:HistoryItem">
+                            <Border
+                                Margin="0,3"
+                                Padding="10,10,14,10"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                ToolTipService.ToolTip="{x:Bind Tip}">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="4" />
+                                        <ColumnDefinition Width="128" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border
+                                        Grid.Column="0"
+                                        Width="3"
+                                        HorizontalAlignment="Left"
+                                        Background="{x:Bind CategoryBrush}"
+                                        CornerRadius="1.5" />
+
+                                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="{x:Bind Time}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <Border
+                                                Padding="6,2"
+                                                HorizontalAlignment="Left"
+                                                Background="{x:Bind CategoryBadgeBrush}"
+                                                CornerRadius="5">
+                                                <TextBlock
+                                                    FontSize="11"
+                                                    Foreground="{x:Bind CategoryTextBrush}"
+                                                    Text="{x:Bind Category}" />
+                                            </Border>
+                                            <!--  召唤动画的导入方式：白底描边，不跟类别色抢  -->
+                                            <Border
+                                                Padding="6,2"
+                                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="5"
+                                                Visibility="{x:Bind MethodVisibility}">
+                                                <TextBlock
+                                                    FontSize="11"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    Text="{x:Bind Method}" />
+                                            </Border>
+                                            <Border
+                                                Padding="7,2"
+                                                Background="{x:Bind CountPillBrush}"
+                                                BorderBrush="{x:Bind CountPillBorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="999"
+                                                Visibility="{x:Bind CountVisibility}">
+                                                <TextBlock
+                                                    FontSize="11"
+                                                    FontWeight="SemiBold"
+                                                    Foreground="{x:Bind CountPillTextBrush}"
+                                                    Text="{Binding CountText}" />
+                                            </Border>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center">
+                                        <TextBlock
+                                            FontSize="14"
+                                            FontWeight="SemiBold"
+                                            Foreground="{x:Bind TitleForeground}"
+                                            Text="{x:Bind OpText}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="{x:Bind CardText}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="3" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="{x:Bind Detail1}"
+                                            TextAlignment="Right" />
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="{x:Bind Detail2}"
+                                            TextAlignment="Right" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <TextBlock
+                    x:Name="EmptyHint"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Text="还没有改动记录"
+                    Visibility="Collapsed" />
+            </Grid>
         </Grid>
 
-        <!--  底部：进度与日志  -->
-        <StackPanel
-            x:Name="StatusStrip"
+        <!--  只留一行轻量状态文字，不再有进度条与日志正文  -->
+        <TextBlock
+            x:Name="StatusText"
             Grid.Row="2"
-            Padding="20,8,20,12"
-            Spacing="6"
-            Visibility="Collapsed">
-            <!--  空闲时折叠: 进度条轨道本身就是一条整宽横线, 留着会被当成多余的分隔线  -->
-            <ProgressBar
-                x:Name="Progress"
-                Height="2"
-                Visibility="Collapsed" />
-            <TextBlock
-                x:Name="StatusText"
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Style="{StaticResource CaptionTextBlockStyle}"
-                Text="就绪" />
-            <Expander
-                x:Name="LogExpander"
-                HorizontalAlignment="Stretch"
-                HorizontalContentAlignment="Stretch"
-                Header="日志"
-                IsExpanded="False">
-                <StackPanel HorizontalAlignment="Stretch" Spacing="6">
-                    <Button
-                        x:Name="CopyLogButton"
-                        HorizontalAlignment="Right"
-                        Click="CopyLog_Click"
-                        Content="复制全部" />
-                    <ListView
-                        x:Name="LogList"
-                        HorizontalAlignment="Stretch"
-                        MaxHeight="160"
-                        SelectionMode="None">
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock
-                                    FontFamily="Consolas"
-                                    FontSize="12"
-                                    IsTextSelectionEnabled="True"
-                                    Text="{Binding}"
-                                    TextWrapping="Wrap" />
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                </StackPanel>
-            </Expander>
-        </StackPanel>
+            Margin="20,0,20,12"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Style="{StaticResource CaptionTextBlockStyle}"
+            Visibility="Collapsed" />
     </Grid>
 </Page>

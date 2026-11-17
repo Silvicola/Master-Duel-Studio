@@ -33,6 +33,8 @@
 """
 
 import json
+import logging
+import shutil
 import struct
 from pathlib import Path
 
@@ -43,8 +45,13 @@ from mdstudio.core.crc import get_crc
 from mdstudio.errors import MDStudioError
 from mdstudio.i18n import tr
 
+log = logging.getLogger("mdstudio")
+
 CARD_W = 704
 CARD_H = 1024
+# 游戏原始卡图宽度。普通卡是 512×512，满画幅超框卡是 512×1024，
+# 灵摆怪兽也是 512×1024，所以光靠尺寸分不开，要配合登记表判断。
+RASTER_W = 512
 
 # 棱彩：按卡型调色板重上色最外 28px 的卡框（gen_prismatic.py 生成）
 PRISMATIC_DIR = "tools/overframe/prismatic"
@@ -64,7 +71,7 @@ GATE_KNOWN_IDS = ("99f84cce",)
 _GATE_CACHE = None  # (root_str, bundle_path)
 
 # 插图窗 / 灵摆插图窗（Floowan 实测值）
-ART_WINDOW = (89, 191, 527, 528)
+ART_WINDOW = (88, 191, 528, 528)
 PENDULUM_ART_WINDOW = (50, 186, 604, 451)
 # 效果栏上沿：主体最多冲到这里，避免压住文字区
 LORE_TOP = 759
@@ -192,6 +199,71 @@ PENDULUM = {13, 14, 15, 16, 17, 19}
 _map = None
 
 
+# ------------------------------------------------------------------ 卡型
+# subtype 到卡框的语义已经搬到随包 tools/cards/subtype_semantics.json，由
+# core.cardindex.frame_png_for() 提供。那张表用 PDF 名称表、本地 Card Decoder Solver
+# 分类与游戏筛选菜单三方核对过，并修正了从静态卡框标注反推带来的 7 处错误。
+#
+# 下面只在语义表整个读不出来时兜底，所以只保证魔法和陷阱不会被画成怪兽框，
+# 细分卡型一律退成效果怪兽。语义表缺失本身会写警告日志，不做静默猜测。
+
+
+def _type_of(code: int) -> int:
+    """语义表不可用时的最小兜底。"""
+    lo = int(code) & 0x3F
+    if lo == 13:
+        return 9
+    if lo == 14:
+        return 10
+    if lo == 0:
+        return 0
+    if lo in (10, 49):
+        return 12
+    return 1
+
+
+def frame_of_card(card_id: int, code: int = None) -> int:
+    """这张卡用哪套卡框（返回游戏原卡框 PNG 的编号）。
+
+    code 是 CARD_Prop 第 3 字节原值（`CardDB.frame_code`），由调用方从游戏数据读。
+    这一层不缓存卡号：游戏更新后重开程序拿到的就是新数据，不存在读到上一版的问题。
+
+    拿不到 code（CLI 直接调、或这张号不在 CARD_Prop 里）才退回静态表 / 同名兄弟，
+    最后兜底 1（效果怪兽）。顺序不能反，静态表是某个版本的快照，新卡一律不在里面。
+    """
+    if code is not None and code >= 0:
+        # 卡框语义在随包 subtype_semantics.json，索引启动时校验过表外值。
+        # 只有语义表整个读不出来时才退回下面的最小兜底。
+        try:
+            from mdstudio.core.cardindex import frame_png_for
+            png = frame_png_for(code)
+            if png is not None:
+                return png
+        except Exception:
+            pass
+        return CODE_TO_PNG.get(_type_of(code), 1)
+    global _map
+    if _map is None:
+        f = runtime.bundle_root() / FRAME_MAP
+        try:
+            _map = json.loads(f.read_text(encoding="utf-8")).get("frame_of_card") or {}
+        except (OSError, ValueError):
+            _map = {}
+        # 补丁表覆盖主表：灵摆漏判和缺条目的卡都在这里改正
+        extra = runtime.bundle_root() / FRAME_MAP_EXTRA
+        try:
+            _map.update(json.loads(extra.read_text(encoding="utf-8")).get("frame_of_card") or {})
+        except (OSError, ValueError):
+            pass
+    key = str(int(card_id))
+    raw = _map.get(key)
+    if raw is None:
+        raw = _frame_aliases().get(key)
+    if raw is None:
+        raw = 1
+    return CODE_TO_PNG.get(int(raw), 1)
+
+
 # ------------------------------------------------------------------ 素材定位
 _aliases = None
 
@@ -235,30 +307,6 @@ def _frame_aliases() -> dict:
                 _aliases[cid] = _map[sib]
                 break
     return _aliases
-
-
-def frame_of_card(card_id: int) -> int:
-    """这张卡用哪套卡框（返回游戏原卡框 PNG 的编号）。查不到给 1（效果怪兽）。"""
-    global _map
-    if _map is None:
-        f = runtime.bundle_root() / FRAME_MAP
-        try:
-            _map = json.loads(f.read_text(encoding="utf-8")).get("frame_of_card") or {}
-        except (OSError, ValueError):
-            _map = {}
-        # 补丁表覆盖主表：灵摆漏判和缺条目的卡都在这里改正
-        extra = runtime.bundle_root() / FRAME_MAP_EXTRA
-        try:
-            _map.update(json.loads(extra.read_text(encoding="utf-8")).get("frame_of_card") or {})
-        except (OSError, ValueError):
-            pass
-    key = str(int(card_id))
-    raw = _map.get(key)
-    if raw is None:
-        raw = _frame_aliases().get(key)
-    if raw is None:
-        raw = 1
-    return CODE_TO_PNG.get(int(raw), 1)
 
 
 def frame_name(n: int) -> str:
@@ -873,14 +921,40 @@ def illust_logical(card_id: int) -> str:
     return f"Card/Images/Illust/tcg/{int(card_id)}"
 
 
+def native_illust_path(ctx, card_id: int):
+    """游戏本体里的卡图 bundle，没有就返回 None。
+
+    190 张初始卡（#4007 那张青眼白龙、#4837 融合等）从没被下载到账号缓存，
+    只有 Steam 装进来的这一份。位置是同一条逻辑路径的 crc 命名，根目录换成
+    masterduel_Data/StreamingAssets/AssetBundle。
+    """
+    h = get_crc(illust_logical(card_id))
+    p = (Path(ctx.game.dir) / "masterduel_Data" / "StreamingAssets"
+         / "AssetBundle" / h[:2] / h)
+    return p if p.is_file() else None
+
+
+def find_illust(ctx, card_id: int):
+    """(卡图 bundle 路径, 是否来自游戏本体)。
+
+    先查当前账号缓存，没有再回本体。游戏自己就是这么加载的：缓存命中就用缓存，
+    找不到才去 StreamingAssets 拿。
+    """
+    p = ctx.game.find_logical(illust_logical(card_id))
+    if p:
+        return p, False
+    return native_illust_path(ctx, card_id), True
+
+
 def read_illust(ctx, card_id: int):
     """读游戏里这张卡的当前卡图。返回 (Image, 信息 dict)，找不到给 (None, 原因)
 
-    宽 ≥ 704 说明它已经是超框图（普通卡是 512×512，灵摆是 512×1024）。
+    overframe 表示这张插图是不是已经带超框，两种形态都算：
+    标准卡宽度到 704，满画幅是 512×1024（见 _is_overframe_art）。
     """
     from mdstudio.core.bundle import textures
 
-    p = ctx.game.find_logical(illust_logical(card_id))
+    p, native = find_illust(ctx, card_id)
     if not p:
         return None, {"error": tr("card %s has no artwork on disk") % card_id}
     try:
@@ -890,25 +964,86 @@ def read_illust(ctx, card_id: int):
     if not ts:
         return None, {"error": tr("no texture in %s") % illust_logical(card_id)}
     d = ts[0]
-    return d.image.convert("RGBA"), {
+    img = d.image.convert("RGBA")
+    return img, {
         "path": str(p),
+        "native": native,
         "width": int(d.m_Width),
         "height": int(d.m_Height),
-        "overframe": int(d.m_Width) >= CARD_W,
+        "overframe": _is_overframe_art(ctx, card_id, img),
     }
 
 
-def base_art(ctx, card_id: int) -> Path:
-    """没选整幅画时的兜底背景：取游戏当前插图，若已是超框图就裁出插图窗。"""
+def _is_overframe_art(ctx, card_id: int, img) -> bool:
+    """这张卡的插图上是不是已经画好超框了。
+
+    标准卡：宽度至少 704，卡面缩在中间、四周留一圈外沿。
+    满画幅：512×1024，卡面铺满整图。这一种光看尺寸分不开，
+    因为灵摆怪兽也是 512×1024，所以还要看这张卡有没有超框登记。
+    """
+    if img.width >= CARD_W:
+        return True
+    return _is_fullbleed_overframe(ctx, card_id, img)
+
+
+def _is_fullbleed_overframe(ctx, card_id: int, img) -> bool:
+    """这张卡的插图是不是「满画幅超框」那种形态。
+
+    官方超框有两种画法：
+      - 标准卡：704×1024，卡面缩在中间，四周留一圈外沿
+      - 满画幅：512×1024，卡面（卡图 + 文字栏）铺满整张图，外沿压在边上
+    两种都要裁插图窗，但坐标系不同，混用会把文字栏一起裁进插画。
+
+    512×1024 也是灵摆怪兽的常规尺寸，光看尺寸会把灵摆卡误判成超框，
+    所以还要确认这张卡确实登记过超框（官方或本工具加的）。
+    """
+    if img.size != (RASTER_W, CARD_H):
+        return False
+    try:
+        cid = int(card_id)
+        return cid in official_registered(ctx) or cid in ours(ctx)
+    except MDStudioError:
+        return False
+
+
+def base_art(ctx, card_id: int, code: int = None, raw: bool = False) -> Path:
+    """没选整幅画时的兜底背景：取游戏当前插图，若已是超框图就裁出插图窗。
+
+    raw=True 原样输出整张卡图，不裁。满画幅超框卡预览时用这个，
+    它的插画本来就是整张卡面，裁了反而跟游戏里看到的不一样。
+    """
     img, meta = read_illust(ctx, card_id)
     if img is None:
         raise MDStudioError(meta.get("error") or tr("card %s has no artwork") % card_id)
-    nn = frame_of_card(card_id)
-    if img.size == (CARD_W, CARD_H):
-        ax, ay, aw, ah = art_box(nn)
-        img = img.crop((ax, ay, ax + aw, ay + ah))
-    out = runtime.data_dir() / "overframe" / f"{int(card_id)}_base.png"
+    nn = frame_of_card(card_id, code)
+    if not raw:
+        if img.size == (CARD_W, CARD_H):
+            # 标准超框卡：卡面在固定坐标上，直接按插图窗裁
+            ax, ay, aw, ah = art_box(nn)
+            img = img.crop((ax, ay, ax + aw, ay + ah))
+        elif img.size == (RASTER_W, CARD_H) and int(nn) in PENDULUM:
+            # 灵摆卡：底图是整张卡牌（512×1024），插画只占上半段。
+            # 把标准的插图窗坐标按 512/704 折算到这张图上再裁，
+            # 否则会取到卡牌中下部，人物头部被切掉、灵摆刻度区混进窗里。
+            ax, ay, aw, ah = art_box(nn)
+            sx = RASTER_W / CARD_W
+            ax, aw = int(round(ax * sx)), int(round(aw * sx))
+            img = img.crop((ax, ay, ax + aw, ay + ah))
+        elif img.size == (RASTER_W, CARD_H) and meta.get("overframe"):
+            # 满画幅超框卡：卡面铺满整图，把「卡面坐标」按比例映射到整图
+            # 插图窗顶端就是卡面顶端，底端按 插图窗高 / 卡面高 折算
+            _, ay, _, ah = art_box(nn)
+            bottom = int(round(ah / (CARD_H - ay) * img.height))
+            img = img.crop((0, 0, img.width, min(bottom, img.height)))
+    suffix = "_raw" if raw else "_base"
+    out = _scratch_dir(ctx) / f"{int(card_id)}{suffix}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
+    # 游戏这批卡图的 alpha 通道很低：官方超框卡的插画实测均值只有 33，
+    # 接近不透明的像素只占 4%，直接当背景素材贴上去几乎是透明的，
+    # 界面预览看着就是一块白，合成到卡框里也会透出底下的框。
+    # 这是素材用途，不保留原图的 alpha。
+    img = img.convert("RGBA")
+    img.putalpha(255)
     img.save(out)
     return out
 
@@ -916,28 +1051,74 @@ def base_art(ctx, card_id: int) -> Path:
 # ------------------------------------------------------------------ 编辑记录
 # 应用一次就把用过的素材（复制一份存好）与滑块参数记下来，下次选到这张卡自动加载，
 # 否则程序会拿"已经合成好的 704 纹理"当底再合成，越改越乱。
-def _edits_file() -> Path:
-    return runtime.data_dir() / "overframe" / "edits.json"
+#
+# 按「安装 + 账号」分目录（2026-11-12）。游戏文件每个账号是一份独立副本，
+# 编辑状态得跟着账号走：以前放在 overframe/ 根下，切号之后会把 A 号的主体
+# 画到 B 号的卡上，而且合成后写进的是 B 号的游戏文件。
+def _account_dir(ctx) -> Path:
+    g = ctx.game
+    return runtime.data_dir() / "overframe" / g.install_id / g.group
 
 
-def _edits_dir() -> Path:
-    d = runtime.data_dir() / "overframe" / "edits"
+def _scratch_dir(ctx) -> Path:
+    """预览用的临时 PNG（整卡底图、合成结果）。跟着账号，避免串号。"""
+    d = _account_dir(ctx) / "preview"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def _load_edits() -> dict:
+def _edits_file(ctx) -> Path:
+    f = _account_dir(ctx) / "edits.json"
+    _adopt_legacy_edits(f)
+    return f
+
+
+def _edits_dir(ctx) -> Path:
+    d = _account_dir(ctx) / "edits"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _adopt_legacy_edits(target: Path) -> None:
+    """老版本那份不分账号的 edits 搬到当前账号下。
+
+    升级那一刻正在用的账号就是它原来的主人，所以谁先读到谁领走；之后再有人
+    来找就已经没有了。搬不动就算了，宁可丢一次"接着调"也不能报错卡住页面。
+    """
+    root = runtime.data_dir() / "overframe"
+    legacy = root / "edits.json"
+    if not legacy.is_file():
+        return
     try:
-        return json.loads(_edits_file().read_text(encoding="utf-8"))
+        if target.exists():
+            legacy.unlink()
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(legacy), str(target))
+        legacy_dir = root / "edits"
+        if legacy_dir.is_dir():
+            dst = target.parent / "edits"
+            dst.mkdir(parents=True, exist_ok=True)
+            for p in legacy_dir.iterdir():
+                if p.is_file() and not (dst / p.name).exists():
+                    shutil.move(str(p), str(dst / p.name))
+            legacy_dir.rmdir()
+    except OSError:
+        pass
+
+
+def _load_edits(ctx) -> dict:
+    try:
+        return json.loads(_edits_file(ctx).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
 
-def load_edit(card_id: int):
-    return _load_edits().get(str(int(card_id)))
+def load_edit(ctx, card_id: int):
+    return _load_edits(ctx).get(str(int(card_id)))
 
 
-def _copy_in(src, card_id: int, suffix: str) -> str:
+def _copy_in(ctx, src, card_id: int, suffix: str) -> str:
     """把素材复制进 edits 目录，避免依赖外部原文件、也不会被 base_art 覆盖。"""
     if not src:
         return ""
@@ -945,7 +1126,7 @@ def _copy_in(src, card_id: int, suffix: str) -> str:
     if not p.is_file():
         return ""
     ext = p.suffix.lower() or ".png"
-    dst = _edits_dir() / f"{int(card_id)}_{suffix}{ext}"
+    dst = _edits_dir(ctx) / f"{int(card_id)}_{suffix}{ext}"
     try:
         if p.resolve() == dst.resolve():
             return str(dst)
@@ -958,13 +1139,28 @@ def _copy_in(src, card_id: int, suffix: str) -> str:
 def save_edit(ctx, card_id: int, art, art_name, subject, subject_name,
               scale, dx, dy, lore_alpha=1.0,
               effect=EFFECT_PRISMATIC, holo_scope=None):
-    data = _load_edits()
+    data = _load_edits(ctx)
+    # 覆盖之前先把「当前这套」存进草稿槽（2026-11-13）。
+    # 超框的编辑状态是单槽位覆盖（edits.json + <卡>_art.png），不存的话用户调了
+    # 十几版参数，一按复原全清，连调过的那套也拿不回来。这里存的是本次修改之前的
+    # 状态，也就是「上一版」；第一版没有前置状态，草稿槽留空，复原时按原样清掉。
+    prev = data.get(str(int(card_id)))
+    if prev:
+        try:
+            d = _edits_dir(ctx)
+            ctx.journal.baselines.save_draft(
+                int(card_id), "overframe",
+                {"art": prev.get("art") or "", "subject": prev.get("subject") or ""},
+                {k: v for k, v in prev.items() if k not in ("art", "subject")},
+                dry_run=ctx.dry_run)
+        except Exception as e:
+            log.warning(tr("over-frame draft snapshot failed for %s: %s"), card_id, e)
     entry = {}
-    art_copy = _copy_in(art, card_id, "art")
+    art_copy = _copy_in(ctx, art, card_id, "art")
     if art_copy:
         entry["art"] = art_copy
         entry["art_name"] = art_name or Path(art_copy).name
-    sub_copy = _copy_in(subject, card_id, "sub")
+    sub_copy = _copy_in(ctx, subject, card_id, "sub")
     if sub_copy:
         entry["subject"] = sub_copy
         entry["subject_name"] = subject_name or Path(sub_copy).name
@@ -975,19 +1171,65 @@ def save_edit(ctx, card_id: int, art, art_name, subject, subject_name,
     entry["effect"] = normalize_effect(effect)
     data[str(int(card_id))] = entry
     try:
-        f = _edits_file()
+        f = _edits_file(ctx)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
 
 
-def clear_edit(ctx, card_id: int):
-    data = _load_edits()
-    if str(int(card_id)) in data:
-        data.pop(str(int(card_id)), None)
+def clear_edit(ctx, card_id: int, restore_prev: bool = False):
+    """删掉这张卡的"接着调"状态，连素材文件一起删。
+
+    只删 JSON 条目的话，edits 目录里的背景与主体会一直留着：撤销几十张卡之后
+    就是几百 MB 的死文件，而且再也对不上任何记录（2026-11-12 一并修掉）。
+
+    restore_prev（2026-11-13）：撤销时把草稿槽里存的那份写回去，而不是清空。
+    用户在同一张卡上调过几版参数，复原要回到「动手之前」的样子；草稿槽里存的
+    正是上一版的状态与素材。没有草稿（从来没改过第二版）就照旧清空。
+    """
+    card_id = int(card_id)
+    prev = None
+    if restore_prev:
         try:
-            _edits_file().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            d = ctx.journal.baselines.draft(card_id, "overframe")
+            if d is not None:
+                prev = json.loads((d / "state.json").read_text(encoding="utf-8"))
+                prev["_dir"] = str(d)
+        except (OSError, ValueError):
+            prev = None
+    data = _load_edits(ctx)
+    if prev:
+        entry = dict(prev)
+        d = Path(entry.pop("_dir"))
+        # 素材留在草稿槽里，改成指向它：再存回去要靠 copy 进 edits 目录，
+        # 直接指过去会让下一次 save_draft 把自己当源再复制一遍
+        for slot in ("art", "subject"):
+            src = next(iter(sorted(d.glob(f"{slot}.*"))), None)
+            if src is not None:
+                entry[slot] = str(_edits_dir(ctx) / src.name)
+                try:
+                    shutil.copy2(src, entry[slot])
+                except OSError:
+                    entry.pop(slot, None)
+        data[str(card_id)] = entry
+        try:
+            _edits_file(ctx).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+        return
+    if str(card_id) not in data:
+        return
+    data.pop(str(card_id), None)
+    try:
+        _edits_file(ctx).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    d = _edits_dir(ctx)
+    for p in d.glob(f"{card_id}_*"):
+        try:
+            if p.is_file():
+                p.unlink()
         except OSError:
             pass
 
@@ -1025,51 +1267,104 @@ def _mtime(p: Path) -> float:
         return 0.0
 
 
+def _write_gate_cache(path: Path, key: str, p: Path, nfiles: int, unity=None) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "root": key, "id": p.name,
+            "fp": [p.stat().st_size, p.stat().st_mtime_ns],
+            "nfiles": nfiles,
+            "unity": unity,
+        }), encoding="utf-8")
+    except OSError:
+        pass       # 缓存写不了不影响正确性, 下次重新扫就是
+
+
+def _unity_fp(ctx):
+    """data.unity3d 的 (大小, mtime)。游戏更新会动这个文件，gate 的 id 可能跟着换。
+
+    超框的写入和撤销都不碰它，所以它是「游戏换代」的可靠信号，比 gate 自己的
+    指纹稳：gate 每写一张卡就被我们改写一次。
+    """
+    try:
+        p = Path(ctx.game.dir) / "masterduel_Data" / "data.unity3d"
+        s = p.stat()
+        return [s.st_size, s.st_mtime_ns]
+    except OSError:
+        return None
+
+
+def _refresh_gate_cache(ctx, p: Path) -> None:
+    """刚改过 gate bundle 之后调用：把定位缓存改指这份文件。
+
+    缓存原本靠「大小 + mtime」判失效，而本工具每写一张超框都会改写这份文件，
+    写完下一次 gate_bundle_path 就必然作废。一次作废 = 全量扫描上万个 bundle
+    （实测 86 秒），界面上表现为「正在刷新预览…」卡死。写入方本来就知道改的是
+    哪一份，直接更新缓存，既不用重扫也不会认错文件。
+    """
+    try:
+        _write_gate_cache(runtime.data_dir() / "overframe" / "_gate_bundle.json",
+                          str(ctx.game.root), p, 0, _unity_fp(ctx))
+    except OSError:
+        pass
+
+
 def gate_bundle_path(ctx) -> Path:
     """找到当前账号下真正生效的 gate bundle。
 
     游戏读的是 LocalData 里松散覆盖的那个 bundle（不是 data.unity3d）。定位顺序：
-    已知 id（快路）→ 磁盘缓存 → 按文件大小从小到大扫描，第一个命中的就是。
-    gate bundle 本身很小（1～2KB），所以扫描通常几百个文件内就停。
+    磁盘缓存 → 已知 id（快路）→ 按文件大小从小到大扫描。全量扫描要对上万个
+    bundle 逐个解包，实测 86 秒，所以缓存必须真的生效。
     """
     global _GATE_CACHE
     root = ctx.game.root
     key = str(root)
-
-    # 快路：已知 id
-    # 判断"是不是当前生效的那份"只有一个可靠依据: 它得覆盖游戏内置表.
-    # 游戏换 id 时旧文件可能留在盘上, 光看"里面有 gate"会一直认着过期的那份.
-    builtin = {t for t, _ in bundled_gate_records(ctx)}
-
-    def fits(p: Path) -> bool:
-        ent = _gate_entries_at(p)
-        return ent is not None and {t for t, _ in ent} >= builtin
-
-    for gid in GATE_KNOWN_IDS:
-        p = ctx.game.find(gid)
-        if p and fits(p):
-            _GATE_CACHE = (key, p)
-            return p
-
-    if _GATE_CACHE and _GATE_CACHE[0] == key:
-        p = Path(_GATE_CACHE[1])
-        if p.is_file() and fits(p):
-            return p
-
     cache_file = runtime.data_dir() / "overframe" / "_gate_bundle.json"
+    has_cache = cache_file.is_file()
+
+    # 失效判据只有两条：缓存指的那个文件还在、里面还是登记表；且游戏本体
+    # （data.unity3d）没被更新过。
+    #
+    # 以前用「这个 bundle 的指纹 + 账号目录文件数」，但本工具每写一张超框都会
+    # 改写 gate、也就是往账号目录多放一个缓存文件，两条判据必然同时失配。
+    # 一次失配就是全量扫描上万个 bundle（实测 86 秒），界面上就是写完卡后
+    # 「正在刷新预览…」卡死几十秒。gate 被我们自己改写不代表它失效，写入方
+    # 还会顺手刷缓存；游戏真的换 id 时 data.unity3d 一定会变，那条留作兜底。
     try:
         c = json.loads(cache_file.read_text(encoding="utf-8"))
         if c.get("root") == key and c.get("id"):
             p = ctx.game.find(c["id"])
-            if p and fits(p):
-                _GATE_CACHE = (key, p)
-                return p
-    except (OSError, ValueError, KeyError):
+            if p and p.is_file():
+                up = _unity_fp(ctx)
+                if _bundle_has_gate(p) and c.get("unity") in (None, up):
+                    if c.get("unity") is None:
+                        # 旧格式缓存没有 unity 键, 补上，下次才能正常比对
+                        _write_gate_cache(cache_file, key, p, c.get("nfiles") or 0, up)
+                    _GATE_CACHE = (key, p)
+                    return p
+    except (OSError, ValueError, KeyError, TypeError):
         pass
 
+    # 全新安装还没缓存时，用写死的 id 起步。GATE_KNOWN_IDS 是逻辑路径的 CRC，
+    # 确认这个文件里确实有登记表就够，省掉一次 86 秒的全量扫描。
+    # 只有在「从来没有缓存」时才这么干：缓存存在却失效，多半是游戏换了 id，
+    # 那必须让下面的全量扫描重新挑，不能认可能已经过期的旧文件。
+    if not has_cache:
+        for gid in GATE_KNOWN_IDS:
+            p = ctx.game.find(gid)
+            if p and p.is_file() and _gate_entries_at(p) is not None:
+                nfiles = sum(len(fns) for _, _, fns in os_walk(root))
+                _write_gate_cache(cache_file, key, p, nfiles, _unity_fp(ctx))
+                _GATE_CACHE = (key, p)
+                return p
+
+    builtin = {t for t, _ in bundled_gate_records(ctx)}
+
     cands = []
+    nfiles = 0
     try:
         for dirpath, _, files in os_walk(root):
+            nfiles += len(files)
             for fn in files:
                 p = Path(dirpath) / fn
                 try:
@@ -1101,12 +1396,7 @@ def gate_bundle_path(ctx) -> Path:
     # 能覆盖官方表的优先, 其次改得新(游戏写过的那份), 再次条目多
     _, p = max(hits, key=lambda h: ({t for t, _ in h[0]} >= builtin,
                                     _mtime(h[1]), len(h[0])))
-    try:
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(json.dumps({"root": key, "id": p.name}),
-                              encoding="utf-8")
-    except OSError:
-        pass
+    _write_gate_cache(cache_file, key, p, nfiles, _unity_fp(ctx))
     _GATE_CACHE = (key, p)
     return p
 
@@ -1298,7 +1588,8 @@ def _dim(layer: Image.Image, alpha: float) -> Image.Image:
 def compose(card_id: int, art=None, subject=None,
             scale: float = 1.0, dx: int = 0, dy: int = 0,
             lore_alpha: float = 1.0, effect: str = EFFECT_PRISMATIC,
-            holo_scope=None, out=None, link_markers: int = None) -> Path:
+            holo_scope=None, out=None, link_markers: int = None,
+            code: int = None, ctx=None) -> Path:
     """合成一张超框卡图，返回写出的 PNG 路径。
 
     link_markers  连接方向掩码（bit0..7 = LINK_ARROWS 顺序）；None 就自动从游戏
@@ -1312,8 +1603,9 @@ def compose(card_id: int, art=None, subject=None,
     effect     边框效果：prismatic 棱彩 / iridescent 虹彩 / glory 幻彩
                / official 官方 / keep 不改边框
     holo_scope 保留参数，已无实际作用（老调用方还在传）
+    code       CARD_Prop 类型字节，决定用哪套卡框；不传就退回静态表
     """
-    nn = frame_of_card(card_id)
+    nn = frame_of_card(card_id, code)
     ax, ay, aw, ah = art_box(nn)
     lx, ly, lw, lh = lore_rect(nn)
     effect = normalize_effect(effect)
@@ -1365,14 +1657,16 @@ def compose(card_id: int, art=None, subject=None,
     panel = frame.crop((lx, ly, lx + lw, ly + lh))
     cv.alpha_composite(_dim(panel, lore_alpha), (lx, ly))
 
-    dst = Path(out) if out else _default_out(card_id)
+    dst = Path(out) if out else _default_out(card_id, ctx)
     dst.parent.mkdir(parents=True, exist_ok=True)
     cv.save(dst)
     return dst
 
 
-def _default_out(card_id: int) -> Path:
-    return runtime.data_dir() / "overframe" / f"{int(card_id)}.png"
+def _default_out(card_id: int, ctx=None) -> Path:
+    d = _scratch_dir(ctx) if ctx is not None else runtime.data_dir() / "overframe"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{int(card_id)}.png"
 
 
 # ------------------------------------------------------------------ 落盘
@@ -1402,8 +1696,8 @@ def apply(ctx, card_id: int, image, register_card: bool = True):
     from mdstudio.ops.tx import Tx
 
     card_id = int(card_id)
-    p = ctx.game.find_logical(illust_logical(card_id))
-    if not p:
+    src, native = find_illust(ctx, card_id)
+    if not src:
         raise MDStudioError(tr("card %s has no artwork bundle to write") % card_id)
 
     img = image.convert("RGBA")
@@ -1411,13 +1705,23 @@ def apply(ctx, card_id: int, image, register_card: bool = True):
         img = img.resize((CARD_W, CARD_H), Image.LANCZOS)
 
     tx = Tx(ctx, "overframe.set", card_id)
-    tx.put_existing(p, _replace_illust(p.read_bytes(), img))
+    # 统一走 put_file：缓存里有这张卡的图就备份记 modified，缓存里没有（只有本体
+    # 那 190 张）就记 created，撤销时把这份新文件删掉。写入目标永远是当前账号的
+    # 缓存，游戏本体一个字节不动，Steam 校验也不会因此报文件损坏。
+    h = get_crc(illust_logical(card_id))
+    tx.put_file(h, _replace_illust(src.read_bytes(), img))
+    gp = None
     if register_card:
         gp = gate_bundle_path(ctx)
         recs = _add_entry(gate_records(ctx), card_id)
         tx.put_existing(gp, _gate_bytes_with(gp, recs))
     tx.commit()
-    return {"path": str(p), "registered": [card_id] if register_card else []}
+    # gate 刚被改写，缓存指纹必然对不上。现在就把缓存换成这份，别让下一次
+    # 定位（写完界面要刷新列表，一定会调）退化成全量扫描。
+    if gp is not None:
+        _refresh_gate_cache(ctx, gp)
+    return {"path": str(ctx.game.path_for(h)), "native_source": native,
+            "registered": [card_id] if register_card else []}
 
 
 def write_bundle(ctx, tx, card_id: int, data: bytes):
@@ -1442,7 +1746,15 @@ def remove(ctx, card_id: int, drop_register: bool = True):
             if r.card == card_id and family_of(r.op) == "overframe"]
     if not mine:
         raise MDStudioError(tr("card %s has no over-frame we made") % card_id)
+    # 撤销会把 gate 文件写回原样，缓存里记的指纹跟着失效。先拿到目标文件，
+    # 撤完把缓存刷回去，否则下一次定位又要全量扫描。
+    try:
+        gp = gate_bundle_path(ctx)
+    except MDStudioError:
+        gp = None
     undo_ids(ctx, {r.id for r in mine})
+    if gp is not None:
+        _refresh_gate_cache(ctx, gp)
     return {"restored": True}
 
 
@@ -1454,7 +1766,7 @@ def family_of(op: str) -> str:
     return a
 
 
-def status(ctx, card_id: int) -> dict:
+def status(ctx, card_id: int, code: int = None) -> dict:
     """这张卡当前的卡图状况，界面上一眼看清"""
     img, meta = read_illust(ctx, card_id)
     if img is None:
@@ -1464,14 +1776,16 @@ def status(ctx, card_id: int) -> dict:
         registered = cid in gate_registered(ctx)
     except MDStudioError:
         registered = False
+    nn = frame_of_card(cid, code)
     return {
         "exists": True,
+        "native": meta.get("native", False),
         "width": meta["width"],
         "height": meta["height"],
         "overframe": meta["overframe"],
         "registered": registered,
         "ours": any(r.card == cid and family_of(r.op) == "overframe"
                     for r in ctx.journal.load()),
-        "frame": frame_of_card(cid),
-        "frame_name": frame_name(frame_of_card(cid)),
+        "frame": nn,
+        "frame_name": frame_name(nn),
     }

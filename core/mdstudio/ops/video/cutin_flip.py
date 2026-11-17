@@ -8,7 +8,8 @@ import hashlib
 import json
 import logging
 
-from mdstudio.core.bundle import replace_textasset, replace_texture
+from mdstudio.core.bundle import (fix_clip_duration_mode, keep_atlas_materials, replace_textasset,
+                                  replace_texture, retarget_skeleton)
 from mdstudio.core.crc import get_crc
 from mdstudio.errors import MDStudioError
 from mdstudio.i18n import tr
@@ -47,8 +48,19 @@ def set_timeline_duration(data: bytes, seconds: float) -> bytes:
         if "m_FixedDuration" in tt and abs(float(tt["m_FixedDuration"]) - seconds) > 1e-6:
             tt["m_FixedDuration"] = float(seconds)
             changed = True
+        # 有些来源卡把 clip 设成「跟随动画时长」（customDuration=0，如 18182）。
+        # 骨架被换掉之后，运行时算不出动画时长，clip 变 0 长，角色停在初始姿势。
+        # 统一改成固定时长，跟 3881 这类能正常播的底盘一致（2026-11-17 实测）。
+        tpl = tt.get("template")
+        if isinstance(tpl, dict) and "customDuration" in tpl and not tpl["customDuration"]:
+            tpl["customDuration"] = 1
+            changed = True
         for c in tt.get("m_Clips") or []:
-            if c.get("m_DisplayName") != "animation":
+            # 轨道名不统一: 实测有 animation / animation_kde（超魔导龙骑士这类）/
+            # animation2 / P16632animation / "P16537 animation" 六种写法，
+            # 全项目 479 条里只有 399 条叫标准的 animation。按「名字里含 animation」
+            # 认，否则遇到 animation_kde 的卡直接判成「没有可拉长的片段」。
+            if "animation" not in str(c.get("m_DisplayName") or "").lower():
                 continue
             hit = True
             start = float(c.get("m_Start", 0))
@@ -63,11 +75,17 @@ def set_timeline_duration(data: bytes, seconds: float) -> bytes:
     return env.file.save(packer="lz4")
 
 
-def gen_atlas(page: str, size, regions) -> str:
-    lines = [page, f"size:{size[0]},{size[1]}", "filter:Linear,Linear", "pma:true", "scale:1"]
-    for name, x, y, w, h in regions:
-        lines += [name, f"bounds:{x},{y},{w},{h}"]
-    return "\n".join(lines) + "\n"
+def gen_atlas(pages) -> str:
+    """pages: [(页文件名, (宽,高), regions)] -> Spine atlas 文本（可以多页）
+
+    页名必须是 P<卡>.png / P<卡>_2.png：游戏的材质槽和骨架就认这两个名字。
+    """
+    out = []
+    for page, size, regions in pages:
+        out += [page, f"size:{size[0]},{size[1]}", "filter:Linear,Linear", "pma:true", "scale:1"]
+        for name, x, y, w, h in regions:
+            out += [name, f"bounds:{x},{y},{w},{h}"]
+    return "\n".join(out) + "\n"
 
 
 # 中文输入法容易打出全角标点, 先统一转成半角再解析
@@ -124,8 +142,78 @@ def frame_alphas(curve, n: int) -> list:
     return [curve_at(curve, float(i)) for i in range(n)]
 
 
+def donor_anim_name(game, donor: int) -> str:
+    """donor 的 Timeline 播放时按哪个名字找动画。
+
+    Timeline 引一个 Spine.Unity 的 AnimationReferenceAsset，里面记着 animationName，
+    游戏拿这个名字去骨架里取动画。它不一定是标准的 animation：实测 #14952 是
+    animation_kde，#11016 是 animation。骨架里写错名字，游戏找不到就停在初始姿势，
+    看起来像一张半透明的静态图（2026-11-10 用户实测 #22804）。
+
+    定位方式：donor 的资产文件名通常等于 Timeline 里那条 clip 的 m_DisplayName，
+    直接拼 {P<donor>/<名字>} 找。任何一步读不出来就退回 animation，不影响主流程。
+    """
+    from mdstudio.core.crc import get_crc
+
+    try:
+        tl = game.find(get_crc(f"{C.base(donor)}/P{donor}Timeline"))
+        if not tl:
+            return "animation"
+        import UnityPy
+
+        disp = ""
+        for o in UnityPy.load(tl.read_bytes()).objects:
+            if o.type.name != "MonoBehaviour":
+                continue
+            try:
+                tt = o.read_typetree()
+            except Exception:
+                continue
+            for c in tt.get("m_Clips") or []:
+                d = str(c.get("m_DisplayName") or "")
+                if "animation" in d.lower():
+                    disp = d
+                    break
+            if disp:
+                break
+        if not disp:
+            return "animation"
+
+        asset = game.find(get_crc(f"{C.base(donor)}/{disp}"))
+        if not asset:
+            return "animation"
+        for o in UnityPy.load(asset.read_bytes()).objects:
+            if o.type.name != "MonoBehaviour":
+                continue
+            try:
+                tt = o.read_typetree()
+            except Exception:
+                continue
+            name = tt.get("animationName")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    except Exception:
+        pass
+    return "animation"
+
+
+def offset_to_units(offset, size_units: float, frame_width: float) -> float:
+    """界面上的「左右移 / 上下移」（帧图像素）-> 骨骼单位。
+
+    帧图宽度会被铺满到 size_units 个骨骼单位（角色尺寸），所以
+    1 帧图像素 = size_units / frame_width 个骨骼单位。
+    推论：填的数值等于 frame_width（也就是界面上的「像素/帧」）时，
+    位移正好一个帧图宽。这条是界面提示的依据，别改成别的口径。
+
+    换来源卡时 size_units 会被 donor_scale 归一化，所以同一个数值在
+    不同来源卡上移动的屏幕距离一致。
+    """
+    return float(offset) * float(size_units) / float(frame_width)
+
+
 def gen_skeleton(w: float, h: float, names, duration: float, pop=True, pop_curve=None,
-                 ox: float = 0.0, oy: float = 0.0, zoom: float = 1.0, rot: float = 0.0) -> str:
+                 ox: float = 0.0, oy: float = 0.0, zoom: float = 1.0, rot: float = 0.0,
+                 anim_name: str = "animation") -> str:
     """pop = 官方 cut-in 那个"弹出放大", 从 Disaster Leo 的 skeleton 量出来的 (60fps):
     root scale 0.7 @0 -(ease-out)-> 0.95 @22.9% -(线性)-> 1.1 @结尾, Body 往上飘一点
     不加的话逐帧动画看着就像贴了个 gif
@@ -181,9 +269,19 @@ def gen_skeleton(w: float, h: float, names, duration: float, pop=True, pop_curve
         "bones": [root_bone, {"name": "Body", "parent": "root"}],
         "slots": [{"name": "frame", "bone": "Body", "attachment": names[0]}],
         "skins": [{"name": "default", "attachments": {"frame": {nm: {"width": w, "height": h} for nm in names}}}],
-        "animations": {"animation": anim},
+        "animations": {anim_name: anim},
     }
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+def needs_matte(source) -> bool:
+    """这次导入会不会用到 AI 抠像，判断口径和 make_frames 的 auto 分支一致。
+
+    界面在点「生成」之前问一句，缺模型就先让用户去装，别等跑了半分钟才报错。
+    读不出来就当作不需要：真错误留给正式流程去报，这里不能替它下结论。
+    """
+    raw = F.sample(source, 1)
+    return bool(raw) and not F.has_alpha(raw) and F.pick_key_color(raw[0]) is not None
 
 
 def make_frames(source, n=48, cell=768, mode="auto", crop_pad=1.04, sharp=False,
@@ -231,26 +329,96 @@ def make_frames(source, n=48, cell=768, mode="auto", crop_pad=1.04, sharp=False,
     return F.sharpen(fr, cell, model=sharp_model, scale=sharp_scale) if sharp else fr
 
 
+def _skeleton_head(data: bytes):
+    """-> (包内 CAB 名, SkeletonDataAsset 的 pathID)。找不到回 ("", 0)。"""
+    import UnityPy
+    env = UnityPy.load(data)
+    cab = next(iter(env.file.files), "")
+    if cab.endswith(".resS"):
+        cab = cab[:-5]
+    for o in env.objects:
+        if o.type.name != "MonoBehaviour":
+            continue
+        try:
+            tt = o.read_typetree()
+        except Exception:
+            continue
+        if "skeletonJSON" in tt:            # SkeletonDataAsset 的独有字段
+            return cab, o.path_id
+    return cab, 0
+
+
+def _retarget_animation(tx, card: int):
+    """只写 HD 时，把动画引用从 SD 骨架改指 HD 骨架。
+
+    Timeline 那条 Spine 轨道播的是一个独立的 clip 资产，它的 skeletonDataAsset
+    指向 **SD 骨架**（来源卡也这么挂，因为官方 SD/HD 是同一套骨骼）。不写 SD 的话
+    那个引用仍指向来源卡的骨架，动画取到了也套不上我们的帧动画，主体静止不动
+    （2026-11-17 实测）。这里读新卡自己的三个包，把引用换成 HD 那一份。
+    """
+    base = C.base(card)
+    anim = tx.read_file(get_crc(f"{base}/animation"))
+    if anim is None:
+        return                              # 这套底盘没有动画引用资产，没得改
+    hd_data = tx.read_file(get_crc(f"{base}/{C.HD}/P{card}JS_SkeletonData"))
+    sd_data = tx.read_file(get_crc(f"{base}/{C.SD}/P{card}JS_SkeletonData"))
+    if not hd_data or not sd_data:
+        raise MDStudioError(tr("P%s: can't find its skeleton data to point the animation at") % card)
+    hd_cab, hd_pid = _skeleton_head(hd_data)
+    sd_cab, _ = _skeleton_head(sd_data)
+    if not hd_cab or not sd_cab or not hd_pid:
+        raise MDStudioError(tr("P%s: can't find its skeleton data to point the animation at") % card)
+    tx.put_file(get_crc(f"{base}/animation"),
+                retarget_skeleton(anim, sd_cab, hd_cab, hd_pid))
+    log.info(tr("pointing the animation reference at the HD skeleton"))
+
+
 def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mode="full",
-          sharp=False, pop=None, donor=C.DEFAULT_DONOR, sd_scale=0.5, preview_dir=None,
+          sharp=False, pop=None, donor=None, sd_scale=0.5, preview_dir=None,
           pop_curve=None, offset_x=0.0, offset_y=0.0, zoom=1.0, rotate=0.0,
-          sharp_model="realesr-animevideov3", force=False, sharp_scale=4):
-    """size = skeleton 宽. None: full = 4800 (铺满屏), 其他 = 2750 (官方大概 2456, 角色大小)
-    pop None: full 不弹 (Phainon 那样整屏不动), 其他照官方弹出放大"""
+          sharp_model="realesr-animevideov3", force=False, sharp_scale=4, compat_sd=None):
+    """size = skeleton 宽. None: full = 4800 (铺满屏), 其他 = 2930 (1440p 上峰值约 110% 屏高)
+    pop None: full 不弹 (Phainon 那样整屏不动), 其他照官方弹出放大
+    compat_sd None: 读设置里的「低清纹理兼容」, 界面与命令行都不用每次传"""
+    # 已经有本工具做的动画时一律拦下，先复原再生成（跟特效页同一口径）。
+    # 放在最前面：不建 Tx、不读帧、不查依赖，什么都没动就退回去。
+    if C.generated(ctx, card):
+        raise MDStudioError(tr("%s already has a cut-in from this tool. Restore it first.") % card)
+    if compat_sd is None:
+        from mdstudio import settings as _settings
+        compat_sd = bool(_settings.get("compat_sd", False))
     if preview_dir:
         from pathlib import Path
         Path(preview_dir).mkdir(parents=True, exist_ok=True)   # 先建好, 别等帧做完才发现路径不对
     if duration > MAX_DURATION:
         raise MDStudioError(tr("duration max is %ss") % MAX_DURATION)
+    # BC7 按 4x4 块压, 帧边长必须是 4 的倍数, 否则贴图尺寸对不上
+    cell = max(4, int(cell) // 4 * 4)
     # 关键字曲线经 RPC 传进来时是 "0,10,10<8,70,50" 这种字符串 (CLI/GUI 自己会先解析),
     # 不在这里转一下的话, 后面会拿字符串当关键帧表用, 报 float 和 str 不能比较
     if isinstance(pop_curve, str):
         pop_curve = parse_pop_curve(pop_curve) if pop_curve.strip() else None
-    size = size or (FULL_SIZE if mode == "full" else 2750)
+    size = size or (FULL_SIZE if mode == "full" else 2930)
     pop = (mode != "full") if pop is None else pop
+    # 来源卡必须由界面按卡片类型给出（见 cutin.donor_for）。漏传就报错，不再静默回落 11016。
+    if not donor:
+        raise MDStudioError(tr("pick a donor card for this animation first"))
+    donor = int(donor)
     cloned = C.is_cloned(ctx, card)
-    if not cloned and C._ours(ctx, card):
+    # 借来的动画不能直接改（2026-11-13 起这张卡只要自己生成过就算「自己的」）：
+    # 借来的那套资源属于别的卡，往里面写贴图会把人家的动画一起改掉。
+    # 这里只剩「确实借了、且从没自己做过」才拦 —— is_cloned 已经认 cutin.video，
+    # 所以重复生成不会再掉进这个分支。
+    if not cloned and C.borrowed(ctx, card):
         raise MDStudioError(tr("%s has a borrowed cut-in. Remove it, the video needs its own clone.") % card)
+    # 已经克隆过的卡，底盘就是它自己那一套（克隆时骨架、图集、Timeline 都复制了一份）。
+    # 动画名和缩放必须按自己的底盘读：否则用户在来源卡框里改一张，名字会对不上，
+    # 缩放系数变了还会让人物在屏幕上突然大一圈。想换底盘得先复原。
+    chassis = int(card) if cloned else donor
+    # 来源卡的 Spine 物体缩放不一样（实测 0.13~0.22），按 0.20 基准折算骨架尺寸，
+    # 这样同一个「角色尺寸」在任何来源卡上都占同样大：屏幕像素 = 尺寸 × 屏宽/5000
+    # （七张来源卡的 prefab 相机都是 camera2DSize 5.0，只有物体缩放不同）。
+    size_units = float(size) * (C.DONOR_BASE_SCALE / C.donor_scale(ctx.game, chassis))
 
     # 先把帧和图集做出来 (最容易失败: 没装 rembg / 视频坏 / 图集超限), 成功了才去 clone,
     # 不然失败后留下一个用户没要的 donor cut-in
@@ -258,55 +426,118 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
                          sharp_scale=sharp_scale)
     fh, fw = frames[0].shape[:2]
     alphas = frame_alphas(pop_curve, len(frames)) if (pop and pop_curve) else None
-    sheet, cols, rows, regions = F.pack(frames, premultiply=True, alphas=alphas)
+    # 低清兼容只写一页：SD 底盘多数只有一个贴图槽，第二页没地方放。与其等写到一半
+    # 才报「只有一页贴图」，不如现在把上限算出来直接说清楚。判断用实际帧宽高，
+    # full 模式下帧不是正方形，拿「像素/帧」比会不准。
+    if compat_sd and F._fit_grid(len(frames), fw, fh) is None:
+        limit = F.one_page_limit(len(frames))
+        raise MDStudioError(tr("low-quality compat writes a single texture page: %s frames allow "
+                               "at most about %spx per frame (now %s)")
+                            % (len(frames), limit, cell))
+    # 三档统一（官方 / 官方★ / 无动画）：低清兼容写 1 页，其余固定写 2 页。
+    # 页数不再由参数碰巧决定，选双页来源卡时也不会因为像素小就退化成单页。
+    sheets = F.pack_pages(frames, premultiply=True, alphas=alphas,
+                          pages=1 if compat_sd else 2)
     if preview_dir:
-        sheet.save(f"{preview_dir}/sheet.png")
-        F.preview_dark(sheet, True).save(f"{preview_dir}/preview_dark.png")
-    names = [r[0] for r in regions]
-    w = float(size)
-    unit = float(size) / float(fw)          # 帧图 1 像素 -> 骨骼单位
+        for i, (sh, _) in enumerate(sheets):
+            sh.save(f"{preview_dir}/sheet{'' if i == 0 else f'_{i + 1}'}.png")
+            F.preview_dark(sh, True).save(f"{preview_dir}/preview_dark{'' if i == 0 else f'_{i + 1}'}.png")
+    names = [r[0] for _, rs in sheets for r in rs]
+    pages = len(sheets)
+    # 底盘页数不够就换一张双页来源卡。#21382 这类自带官方动画的卡，官方那套只有一页
+    # 贴图（P<卡>_Atlas 里只有一个材质槽），两页序列帧写不进去。材质槽烘在资源里加不
+    # 出来，只能改用双页来源卡克隆一份。只写 HD 时只查 HD 的页数。
+    want_q = [C.HD] + ([C.SD] if compat_sd else [])
+    from mdstudio.core.catalog import Catalog
+    pre = Catalog(ctx.game)
+    short = [q for q in want_q if C.chassis_pages(pre, chassis, q) < pages]
+    if short:
+        alt = C.donor_with_pages(ctx, pre, card, pages, want_q)
+        if not alt:
+            raise MDStudioError(tr("no donor has %s texture pages (%s needed). Use fewer frames "
+                                   "or a smaller frame size.") % (pages, "/".join(short)))
+        log.info(tr("%s: its chassis has %s texture page(s) in %s, cloning from %s instead"),
+                 card, C.chassis_pages(pre, chassis, short[0]), "/".join(short), alt)
+        donor = chassis = alt
+        size_units = float(size) * (C.DONOR_BASE_SCALE / C.donor_scale(ctx.game, chassis))
+    w = size_units
     skel = gen_skeleton(w, w * fh / fw, names, duration, pop, pop_curve,
-                        ox=float(offset_x) * unit, oy=float(offset_y) * unit, zoom=float(zoom),
-                        rot=float(rotate))
-    page = f"P{card}.png"
+                        ox=offset_to_units(offset_x, w, fw), oy=offset_to_units(offset_y, w, fw),
+                        zoom=float(zoom),
+                        rot=float(rotate), anim_name=donor_anim_name(ctx.game, chassis))
 
+    # 克隆与替换并进同一条记录：分开提交会让历史里出现「克隆召唤动画」和
+    # 「视频召唤动画」两行，看起来像做了两次（2026-11-12 用户实测）。
+    tx = Tx(ctx, "cutin.video", card)
     if not cloned:
         log.info(tr("cloning %s from %s first"), card, donor)
-        C.clone(ctx, card, donor, force=force)
+        C.clone(ctx, card, donor, force=force, tx=tx)
         if ctx.dry_run:
             # dry-run 下 clone 没真写, 后面找不到 P<card> 的文件, 到这就够看了
             log.info(tr("[dry-run] then: replace skeleton + atlas + texture of P%s (%s frames)"),
                      card, len(names))
             return None
-    tx = Tx(ctx, "cutin.video", card)
+    C.own_anim(tx, card)
     dirs = C.scale_dirs(tx.catalog, card)
     if not dirs:
         raise MDStudioError(tr("P%s: can't find its scale folders in the manifest") % card)
     step(tr("packing the cut-in textures for P%s (texture compression, can take a minute)"), card)
     import gc
     gc.collect()      # 帧已经拼进 sheet 了, 先把能放的放掉, 16384 的图压 BC7 峰值要好几 G
+    # 两档都写时，Timeline 的动画引用挂在 SD 骨架上就够了（SD 写的是我们自己那套）。
+    # 只写 HD 时那个引用还指着来源卡的 SD 骨架，动画套不上、主体停在第一帧，
+    # 所以先把引用改到 HD（见 _retarget_animation 的说明）。
+    if not compat_sd:
+        _retarget_animation(tx, card)
     # SD (半尺寸) 先做, HD 那张最大的放最后, 峰值不叠在一起
     for q, scale in sorted(dirs.items(), key=lambda kv: kv[0] != C.SD):
+        if q == C.SD and not compat_sd:
+            # 不写 SD：底盘那套低清贴图原样留着，引用已改到 HD 骨架。
+            # SD 底盘多数只有一个贴图槽，两页动画写进去会直接失败。
+            log.info(tr("keeping the SD textures as the chassis has them (low-quality compat is off)"))
+            continue
         b = f"{C.base(card)}/{q}"
-        sh, rg = sheet, regions
-        if q == C.SD and sd_scale != 1:
-            # SD 画质用半尺寸, 省显存
-            sw, shh = max(4, int(sheet.width * sd_scale) // 4 * 4), max(4, int(sheet.height * sd_scale) // 4 * 4)
-            sh = sheet.resize((sw, shh))
-            rg = [(nm, int(x * sd_scale), int(y * sd_scale), int(ww * sd_scale), int(hh * sd_scale))
-                  for nm, x, y, ww, hh in regions]
-        for lp, fn in ((f"{b}/P{card}JS", lambda d: replace_textasset(d, skel)),
-                       (f"{b}/{scale}/P{card}.atlas", lambda d, s=sh, r=rg: replace_textasset(d, gen_atlas(page, s.size, r))),
-                       (f"{b}/{scale}/P{card}", lambda d, s=sh: replace_texture(d, s, name=f"P{card}"))):
-            p = tx.game.find(get_crc(lp))
-            if not p:
+        scaled = []
+        for sheet, regions in sheets:
+            sh, rg = sheet, regions
+            if q == C.SD and sd_scale != 1:
+                # SD 画质用半尺寸, 省显存
+                sw, shh = max(4, int(sheet.width * sd_scale) // 4 * 4), max(4, int(sheet.height * sd_scale) // 4 * 4)
+                sh = sheet.resize((sw, shh))
+                rg = [(nm, int(x * sd_scale), int(y * sd_scale), int(ww * sd_scale), int(hh * sd_scale))
+                      for nm, x, y, ww, hh in regions]
+            scaled.append((sh, rg))
+        atlas = gen_atlas([(f"P{card}{'' if i == 0 else f'_{i + 1}'}.png", s.size, r)
+                           for i, (s, r) in enumerate(scaled)])
+        writes = [(f"{b}/P{card}JS", lambda d, s=skel: replace_textasset(d, s)),
+                  (f"{b}/{scale}/P{card}.atlas", lambda d, a=atlas: replace_textasset(d, a)),
+                  # 材质槽裁到实际页数：官方数据里两者恒等，差一个就可能整份图集取不到
+                  (f"{b}/{scale}/P{card}_Atlas",
+                   lambda d, n=len(scaled): keep_atlas_materials(d, n))]
+        for i, (s, _) in enumerate(scaled):
+            suffix = "" if i == 0 else f"_{i + 1}"
+            writes.append((f"{b}/{scale}/P{card}{suffix}",
+                           lambda d, ss=s, suf=suffix: replace_texture(d, ss, name=f"P{card}{suf}")))
+        for lp, fn in writes:
+            h = get_crc(lp)
+            # 克隆出来的文件还在本事务的队列里，磁盘上没有；read_file 两边都看
+            data = tx.read_file(h)
+            if data is None:
+                # 只有第二页会走到这: 克隆来的底盘只带一个贴图槽
+                if lp.endswith(f"P{card}_2"):
+                    raise MDStudioError(tr("this cut-in chassis has only one texture page, but the sheet needs two. "
+                                          "Clone from a two-page card (see the donor list) first."))
                 raise MDStudioError(tr("missing %s") % lp)
-            tx.put_existing(p, fn(p.read_bytes()))
+            tx.put_file(h, fn(data))
     # 动画比 donor 的 Timeline 长就把 Timeline 拉长, 不然放到一半被切
-    tl = tx.game.find(get_crc(f"{C.base(card)}/P{card}Timeline"))
-    if not tl:
+    # Timeline 可能是本次克隆出来的，同样要走事务队列而不是磁盘
+    tl_h = get_crc(f"{C.base(card)}/P{card}Timeline")
+    tl_data = tx.read_file(tl_h)
+    if tl_data is None:
         raise MDStudioError(tr("missing P%sTimeline") % card)
-    tx.put_existing(tl, set_timeline_duration(tl.read_bytes(), round(duration + 0.1, 3)))
+    tx.put_file(tl_h, set_timeline_duration(tl_data, round(duration + 0.1, 3)))
     tx.rec.meta = {"source": str(source), "frames": len(names), "cell": cell, "duration": duration,
-                   "sheet": list(sheet.size), "size": size, "pop": pop}
+                   "sheet": list(sheets[0][0].size), "pages": len(sheets), "size": size,
+                   "donor": (C.chassis_donor(ctx, card) or donor) if cloned else donor,
+                   "pop": pop, "compat_sd": bool(compat_sd)}
     return tx.commit()

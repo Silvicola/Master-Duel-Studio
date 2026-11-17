@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using MDStudio.Services;
 using Windows.Storage.Pickers;
 
 namespace MDStudio.Pages;
@@ -204,7 +205,10 @@ public sealed partial class WallpaperPage : Page
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
         var file = await picker.PickSingleFileAsync();
-        return file?.Path;
+        if (file is null) return null;
+        // 过滤器能绕过（粘贴完整路径、改扩展名），这里按内容再确认一次
+        if (!await ImportCheck.EnsureAsync(XamlRoot, file.Path, "image")) return null;
+        return file.Path;
     }
 
     // ----------------------------------------------------------------- 替换 / 还原
@@ -212,6 +216,11 @@ public sealed partial class WallpaperPage : Page
     {
         if (App.Engine is not { } engine) return;
         if (_pickedLobby is null) { SetLobbyStatus("先选一张图片"); return; }
+        if (!await Dialogs.ConfirmAsync(XamlRoot, "替换大厅壁纸？",
+            "把选好的图片铺到游戏的大厅壁纸纹理上。",
+            "替换", null, null,
+            "完全退出游戏再重开才会加载；之后点「还原」可以恢复原图。"))
+            return;
         SetLobbyBusy(true, "正在替换大厅壁纸…");
         try
         {
@@ -219,18 +228,25 @@ public sealed partial class WallpaperPage : Page
             {
                 ["image"] = _pickedLobby,
                 ["which"] = new[] { "lobby" },
+                ["dry_run"] = App.DryRun,
             });
             SetLobbyBusy(false, "");
             await RefreshAsync();
-            SetLobbyStatus("已替换大厅壁纸。完全退出游戏再重开才会加载。");
+            SetLobbyStatus(App.DryRun ? "预演结束，没有写游戏文件。"
+                : "已替换大厅壁纸。完全退出游戏再重开才会加载。");
         }
-        catch (Exception ex) { SetLobbyBusy(false, ""); ReportError("替换大厅壁纸失败", ex); }
+        catch (Exception ex) { SetLobbyBusy(false, ""); await ReportFailureAsync("替换大厅壁纸失败", ex); }
     }
 
     private async void ShopApplyBtn_Click(object sender, RoutedEventArgs e)
     {
         if (App.Engine is not { } engine) return;
         if (_pickedShop is null) { SetShopStatus("先选一张图片"); return; }
+        if (!await Dialogs.ConfirmAsync(XamlRoot, "替换大厅背景？",
+            "会写 8 张大厅背景纹理，包括 data.unity3d 里的 ShopBGBase02 与 TexSoloTransitionBG。",
+            "替换", null, null,
+            "完全退出游戏再重开才会加载；之后点「还原」可以恢复原图。"))
+            return;
         SetShopBusy(true, "正在替换大厅背景…");
         try
         {
@@ -238,46 +254,60 @@ public sealed partial class WallpaperPage : Page
             {
                 ["image"] = _pickedShop,
                 ["which"] = new[] { "shop" },
+                ["dry_run"] = App.DryRun,
             });
             SetShopBusy(false, "");
             await RefreshAsync();
-            SetShopStatus("已替换 8 张大厅背景（含 data.unity3d 的 ShopBGBase02、TexSoloTransitionBG）。完全退出游戏再重开才会加载。");
+            SetShopStatus(App.DryRun ? "预演结束，没有写游戏文件。"
+                : "已替换 8 张大厅背景（含 data.unity3d 的 ShopBGBase02、TexSoloTransitionBG）。完全退出游戏再重开才会加载。");
         }
-        catch (Exception ex) { SetShopBusy(false, ""); ReportError("替换大厅背景失败", ex); }
+        catch (Exception ex) { SetShopBusy(false, ""); await ReportFailureAsync("替换大厅背景失败", ex); }
     }
 
     private async void LobbyRestoreBtn_Click(object sender, RoutedEventArgs e)
     {
         if (App.Engine is not { } engine) return;
+        if (!await Dialogs.ConfirmAsync(XamlRoot, "还原大厅壁纸？",
+            "把大厅壁纸换回游戏原图。",
+            "还原", null, null,
+            "当前这张图不会被保留，想再用得重新选一次。"))
+            return;
         SetLobbyBusy(true, "正在还原大厅壁纸…");
         try
         {
             await engine.CallAsync("wallpaper.restore", new Dictionary<string, object?>
             {
                 ["which"] = new[] { "lobby" },
+                ["dry_run"] = App.DryRun,
             });
             SetLobbyBusy(false, "");
             await RefreshAsync();
-            SetLobbyStatus("已还原成游戏原图。");
+            SetLobbyStatus(App.DryRun ? "预演结束，没有写游戏文件。" : "已还原成游戏原图。");
         }
-        catch (Exception ex) { SetLobbyBusy(false, ""); ReportError("还原大厅壁纸失败", ex); }
+        catch (Exception ex) { SetLobbyBusy(false, ""); await ReportFailureAsync("还原大厅壁纸失败", ex); }
     }
 
     private async void ShopRestoreBtn_Click(object sender, RoutedEventArgs e)
     {
         if (App.Engine is not { } engine) return;
+        if (!await Dialogs.ConfirmAsync(XamlRoot, "还原大厅背景？",
+            "把 8 张大厅背景换回游戏原图。",
+            "还原", null, null,
+            "当前这张图不会被保留，想再用得重新选一次。"))
+            return;
         SetShopBusy(true, "正在还原大厅背景…");
         try
         {
             await engine.CallAsync("wallpaper.restore", new Dictionary<string, object?>
             {
                 ["which"] = new[] { "shop" },
+                ["dry_run"] = App.DryRun,
             });
             SetShopBusy(false, "");
             await RefreshAsync();
-            SetShopStatus("已还原成游戏原图。");
+            SetShopStatus(App.DryRun ? "预演结束，没有写游戏文件。" : "已还原成游戏原图。");
         }
-        catch (Exception ex) { SetShopBusy(false, ""); ReportError("还原大厅背景失败", ex); }
+        catch (Exception ex) { SetShopBusy(false, ""); await ReportFailureAsync("还原大厅背景失败", ex); }
     }
 
     private async void ReloadBtn_Click(object sender, RoutedEventArgs e)
@@ -382,6 +412,14 @@ public sealed partial class WallpaperPage : Page
         App.AddLog("ERROR", msg);
         SetLobbyStatus(msg);
         SetShopStatus(msg);
+    }
+
+    /// <summary>写失败要弹出结果框：只在页内状态行写一行，用户很容易当成替换成功了。
+    /// 状态行照旧留着，关掉弹窗还能看到。</summary>
+    private async Task ReportFailureAsync(string what, Exception ex)
+    {
+        ReportError(what, ex);
+        await Dialogs.InfoAsync(XamlRoot, what, ex.Message, danger: true);
     }
 
     /// <summary>左栏（大厅壁纸）锁定/解锁：只动左栏自己的按钮与提示，不影响右栏。</summary>

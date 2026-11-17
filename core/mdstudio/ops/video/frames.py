@@ -1,5 +1,6 @@
 """取帧 / 抠图 / 超分 / 拼图集"""
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -78,20 +79,17 @@ _SESSION = None
 
 
 def matting_model_path():
-    """isnet-anime.onnx 在哪: 环境变量 > 包内 tools/matting > 用户缓存目录.
+    """isnet-anime.onnx 在哪: 环境变量 > 程序目录 tools/matting。
 
-    包内优先: 便携版自带 176MB 的那份, 就该用它, 免得用户缓存里的旧模型
-    (或者下到一半的残文件) 把随包的盖掉 —— 便携原则是不读程序目录之外的东西。
+    只认程序目录里的那一份（2026-11-16 用户定）。以前还会退回 ~/.u2net，
+    结果是「设置页说没装、生成却跑得动」，两边口径对不上。便携版的原则是
+    不读程序目录之外的东西，缺了就在设置页下。
     """
     p = os.environ.get("MDSTUDIO_MATTING_MODEL")
     if p and Path(p).is_file():
         return Path(p)
-    home = Path(os.environ.get("U2NET_HOME") or (Path.home() / ".u2net"))
-    for cand in (runtime.bundle_root() / "tools" / "matting" / "isnet-anime.onnx",
-                 home / "isnet-anime.onnx"):
-        if cand.is_file():
-            return cand
-    return None
+    cand = runtime.bundle_root() / "tools" / "matting" / "isnet-anime.onnx"
+    return cand if cand.is_file() else None
 
 
 def _matte_session():
@@ -110,8 +108,9 @@ def _matte_session():
                               "python -m pip install onnxruntime   (or pick mode square / full)")) from e
     model = matting_model_path()
     if model is None:
+        # 只认程序目录那一份（见 matting_model_path），所以直接把目的地报出来
         raise MDStudioError(tr("background-removal model not found. Put isnet-anime.onnx in %s")
-                           % (Path.home() / ".u2net"))
+                           % (runtime.bundle_root() / "tools" / "matting"))
     step(tr("loading the background-removal model"))
     so = ort.SessionOptions()
     so.log_severity_level = 3
@@ -123,8 +122,12 @@ def _matte_session():
 def _subject_alpha(sess, frame) -> np.ndarray:
     """isnet-anime 出 alpha. 它固定吃 1024x1024, 单通道输出.
 
-    归一化按 rembg 对 isnet 的写法: 先除以本图最大值, 再 (x/mean - 1)/std.
-    换成标准 ImageNet 那套 (x-mean)/std 会输出全零, 这个模型只认前者.
+    归一化按 rembg 对 isnet 的写法: 先除以本图最大值, 再 (x - mean) / std.
+
+    2026-11-17 修: 原先是 (x / mean - 1) / std, 与 rembg 不一致。实测绿幕素材下
+    模型会把整片纯绿幕判成主体(被它判为主体核心的像素里 55~75% 就是 (0,254,0)),
+    随后 despill 再把这层绿按颜色距离乘掉, 连带把角色身上偏绿的部位压成半透明。
+    改回标准写法后绿雾消失, 主体核心 alpha 不再被削。
     """
     h, w = frame.shape[:2]
     im = Image.fromarray(frame[..., :3]).resize((1024, 1024), Image.BILINEAR)
@@ -133,7 +136,7 @@ def _subject_alpha(sess, frame) -> np.ndarray:
     a = a / mx
     mean = np.array([0.485, 0.456, 0.406], np.float32)
     std = np.array([0.229, 0.224, 0.225], np.float32)
-    a = (a / mean - 1.0) / std
+    a = (a - mean) / std
     a = np.transpose(a, (2, 0, 1))[None].astype(np.float32)
 
     name = sess.get_inputs()[0].name
@@ -467,6 +470,96 @@ def pack(frames, premultiply: bool, cols=None, alphas=None):
         regions.append((f"frame_{i}", x, y, fw, fh))
         frames[i] = None
     return sheet, cols, rows, regions
+
+
+def _fit_grid(n: int, fw: int, fh: int):
+    """一页能不能装下 n 帧。装得下回 (cols, rows)，装不下回 None。"""
+    if n <= 0:
+        return None
+    cols = max(1, math.ceil(n ** 0.5))
+    while cols * fw > MAX_TEX and cols > 1:
+        cols -= 1
+    rows = (n + cols - 1) // cols
+    if cols * fw > MAX_TEX or rows * fh > MAX_TEX:
+        return None
+    return cols, rows
+
+
+def one_page_limit(n: int) -> int:
+    """n 帧排一页时每帧边长最多能到多少（4 的倍数）。排不下回 0。
+
+    「低清纹理兼容」只写一页（SD 底盘多数只有一个贴图槽），超了要报错，
+    报错里得给得出具体上限，而不是让用户自己试。
+    """
+    for c in range(min(MAX_TEX, 4096) // 4 * 4, 127, -4):
+        if _fit_grid(n, c, c):
+            return c
+    return 0
+
+
+def pack_pages(frames, premultiply: bool, alphas=None, max_pages: int = 2, pages: int = None):
+    """-> [(sheet, regions), ...]，regions 的帧名跨页连续 (frame_0 到 frame_{n-1})
+
+    pages=None 老行为：一页装得下就一页，装不下才两页。
+    pages=1/2 固定页数：低清兼容写单页（SD 只有一个贴图槽），正常生成写双页
+    （三档统一，都用双页来源卡）。装不下就直接报错，不静默降级。
+    两页是底盘上限：克隆出来的材质叫 P<卡>_P<卡>_2，只有两个贴图槽，
+    骨架的 atlas 也只认 P<卡>.png 与 P<卡>_2.png 两个页名。
+
+    分页时按 ceil(n/2) 算每页格数，格子大小全页统一（骨骼里所有附件共用一个尺寸）。
+    72 帧、格子 2728：一页 36 格 6x6，两边各 16368px，正好卡在 16384 上限内。
+    """
+    n = len(frames)
+    if n == 0:
+        raise MDStudioError(tr("no frames to pack"))
+    fh, fw = frames[0].shape[:2]
+    if pages is None:
+        g = _fit_grid(n, fw, fh)
+        pages = 1
+        if g is None:
+            if max_pages < 2:
+                raise MDStudioError(tr("sheet is over the %spx limit. Use fewer frames or a smaller size.") % MAX_TEX)
+            pages = 2
+            g = _fit_grid((n + 1) // 2, fw, fh)
+    elif pages == 1:
+        g = _fit_grid(n, fw, fh)
+    else:
+        if max_pages < 2:
+            raise MDStudioError(tr("sheet is over the %spx limit. Use fewer frames or a smaller size.") % MAX_TEX)
+        g = _fit_grid((n + 1) // 2, fw, fh)
+    if g is None:
+        if pages == 2:
+            raise MDStudioError(tr("sheet is over the %spx limit even split in two. Use fewer frames or a smaller size.")
+                                % MAX_TEX)
+        raise MDStudioError(tr("sheet is over the %spx limit. Use fewer frames or a smaller size.") % MAX_TEX)
+    cols, rows = g
+    per = cols * rows
+    out = []
+    for p in range(pages):
+        sheet = Image.new("RGBA", (cols * fw, rows * fh), (0, 0, 0, 0))
+        regions = []
+        if p == 0:
+            step(tr("building the %sx%s sheet (%s frames)"), cols * fw, rows * fh, n)
+        for i in range(p * per, min(n, (p + 1) * per)):
+            tick(tr("building the sheet"), i + 1, n)
+            a = frames[i]
+            if premultiply:
+                a = a.astype(np.float32)
+                a[..., :3] *= a[..., 3:4] / 255.0
+                if alphas is not None:
+                    k = float(alphas[i])
+                    if k < 1.0:
+                        a *= k
+                a = a.clip(0, 255).astype(np.uint8)
+            else:
+                a = edge_bleed(a)
+            local = i - p * per
+            x, y = (local % cols) * fw, (local // cols) * fh
+            sheet.paste(Image.fromarray(a, "RGBA"), (x, y))
+            regions.append((f"frame_{i}", x, y, fw, fh))
+            frames[i] = None
+        out.append((sheet, regions))
+    return out
 
 
 def preview_dark(sheet: Image.Image, premultiplied: bool) -> Image.Image:

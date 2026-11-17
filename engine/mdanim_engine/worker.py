@@ -82,14 +82,36 @@ def main() -> int:
         "i": -1 if i is None else int(i), "n": int(n or 0)}))
 
     try:
-        ctx = Ctx.open(args.pop("game_dir", None), dry_run=dry_run)
-        rec = ACTIONS[op](ctx, **args)
+        fn = ACTIONS[op]
+        # 资源下载这类动作在选游戏目录之前就要能跑，不能强求游戏装好
+        if getattr(fn, "needs_ctx", True):
+            ctx = Ctx.open(args.pop("game_dir", None), dry_run=dry_run)
+        else:
+            ctx = None
+        # 写入类动作统一按动态索引放行。索引解不开、卡未上线、卡型表外时
+        # 一律拒绝，避免拿上一版数据或猜出来的卡框写进游戏。
+        if ctx is not None and args.get("card"):
+            from mdstudio.core.cardindex import CardIndex
+            idx = CardIndex.ensure(ctx.game)
+            st = idx.status(int(args["card"]))
+            if not idx.ok:
+                raise MDStudioError("卡数据无法解析，已禁用写入：" + idx.error)
+            if st["unreleased"]:
+                raise MDStudioError("这张卡还没上线，已锁定")
+            if st["unknown_subtype"]:
+                raise MDStudioError("游戏出现未知卡型 %s，卡框未确认，已拒绝写入"
+                                    % st["subtype"])
+        rec = fn(ctx, **args)
         emit({"ev": "result", "ok": True, "data": _summary(rec, op)})
     except MDStudioError as e:
         emit({"ev": "result", "ok": False, "kind": type(e).__name__, "message": str(e)})
     except Exception as e:
+        # 界面只显示一行原因。完整 traceback 走日志通道进历史页，别塞进弹窗：
+        # 下载失败这类异常栈能有一千多字符，弹窗会被撑出屏幕，按钮点不到。
+        tb = traceback.format_exc()
+        emit_log(tb, "ERROR")
         emit({"ev": "result", "ok": False, "kind": type(e).__name__,
-              "message": f"{e}\n{traceback.format_exc()[-1200:]}"})
+              "message": f"{type(e).__name__}: {e}".strip()})
     return 0
 
 

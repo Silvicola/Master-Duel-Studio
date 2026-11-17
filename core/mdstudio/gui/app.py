@@ -114,10 +114,11 @@ def _clock(sec):
     return f"{sec // 60}:{sec % 60:02d}"
 
 STATUS_COLOR = {"yours": "#3fb27f", "wiped": "#e0a030", "game": "#8a8f98",
-                "official": "#c42b1c"}      # official = 目标卡官方自带, 克隆会覆盖它
+                "borrowed": "#c42b1c", "official": "#c42b1c"}      # official = 目标卡官方自带, 克隆会覆盖它
 # game = 游戏表里本来就有 (官方或别的 mod), 区分不了, 统一叫 yes
 # ctx="badge": 和 CLI/TUI 的徽章共用一套译文
-STATUS_TEXT = {"yours": tr("yours"), "wiped": tr("WIPED"), "game": tr("Has a game cut-in"), None: "-"}
+STATUS_TEXT = {"yours": tr("yours"), "wiped": tr("WIPED"), "game": tr("Has a game cut-in"),
+               "borrowed": tr("borrowed"), None: "-"}
 
 
 VIDEO_MODES = [("full", tr("Full screen — whole video as is, nothing cut")),
@@ -920,7 +921,7 @@ class Main(MicaWindow):
         self.cv_frames.setRange(4, 200)
         self.cv_frames.setValue(120)
         self.cv_cell = QSpinBox()
-        self.cv_cell.setRange(128, 2048)
+        self.cv_cell.setRange(128, 2728)
         self.cv_cell.setValue(1080)
         self.cv_dur = QDoubleSpinBox()
         self.cv_dur.setRange(0.4, 15.0)
@@ -928,7 +929,7 @@ class Main(MicaWindow):
         self.cv_size = QSpinBox()
         self.cv_size.setRange(500, 8000)
         self.cv_size.setValue(4800)
-        self.cv_size.setToolTip(tr("4800 = fills a 16:9 screen. ~2750 = the size of Konami's cut-ins"))
+        self.cv_size.setToolTip(tr("4800 = fills a 16:9 screen. 2930 = the peak fills 110% of the screen height"))
         # 整体位移 (单位是帧图像素, 正向: X 向右 / Y 向上) 和整体倍率
         self.cv_offx = QSpinBox()
         self.cv_offx.setRange(-3000, 3000)
@@ -1199,8 +1200,8 @@ class Main(MicaWindow):
         target = self.cut_card.peek()
         official = self._cut_force()
         self.cut_official.setVisible(official)
-        # 已经有我们的动画时也不能再克隆: op 那边会拦「already has a cut-in from this tool」,
-        # 按钮亮着只会让人点出一个报错
+        # 「克隆一份」是换底盘用的：这张卡已经有我们做的动画时按钮还是禁用，
+        # 但重复生成动画现在走的是覆盖，不再经过这里（2026-11-13）。
         self.cut_btn.setEnabled(not official and not self._cut_has_ours())
         self.cut_donor.setReadOnly(official)
         self.cut_donor_preset.setEnabled(not official)
@@ -1736,7 +1737,7 @@ class Main(MicaWindow):
                 # 官方自带动画的卡: 克隆时来源卡默认填它自己, 并挂一个「官方有动画」标签
                 self._official = {card for card, st in rows if st == "game"}
                 # 已经有我们动画的卡 (yours / wiped): 再点克隆会被 op 拦, 按钮该是灰的
-                self._mine = {card for card, st in rows if st in ("yours", "wiped")}
+                self._mine = {card for card, st in rows if st in ("yours", "wiped", "borrowed")}
                 self._fill_cards(self.cut_list, rows)
                 self._sync_target_hint()
             elif t is self.t_runfx:

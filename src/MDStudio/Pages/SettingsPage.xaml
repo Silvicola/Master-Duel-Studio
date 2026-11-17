@@ -5,7 +5,41 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    NavigationCacheMode="Required"
     mc:Ignorable="d">
+
+    <Page.Resources>
+        <!--
+            分组标题：26px 圆角色块 + 图标 + 标题。色块用 14% 透明度的色相，
+            Mica 的浅色/深色两种材质下都只是一层淡色，不会跳出来抢视线。
+        -->
+        <Style x:Key="GroupIconBox" TargetType="Border">
+            <Setter Property="Width" Value="26" />
+            <Setter Property="Height" Value="26" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style
+            x:Key="GroupTitle"
+            BasedOn="{StaticResource BodyStrongTextBlockStyle}"
+            TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <!--  统计块：浅底色 + 小标题 + 大数字  -->
+        <Style x:Key="StatTile" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorSecondaryBrush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="12,10,12,10" />
+        </Style>
+        <Style x:Key="StatLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+        </Style>
+        <Style x:Key="StatValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="24" />
+            <Setter Property="Margin" Value="0,2,0,0" />
+        </Style>
+    </Page.Resources>
 
     <ScrollViewer
         x:Name="SettingsScroller"
@@ -14,91 +48,284 @@
         VerticalScrollBarVisibility="Auto">
         <StackPanel
             x:Name="SettingsBody"
-            MaxWidth="820"
+            MaxWidth="1040"
             Padding="24,8,24,24"
             HorizontalAlignment="Left"
             Spacing="16">
 
             <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="设置" />
 
-            <!--  游戏  -->
-            <ContentControl Padding="20" Style="{StaticResource PanelCard}">
-                <StackPanel Spacing="16">
-                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="游戏" />
+            <!--  第一行：游戏（宽） | 卡片数据  -->
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.5*" MinWidth="420" />
+                    <ColumnDefinition Width="1*" MinWidth="300" />
+                </Grid.ColumnDefinitions>
 
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="游戏目录" />
-                            <TextBox
-                                x:Name="DirBox"
-                                IsReadOnly="True"
-                                Text="读取中…" />
+                <ContentControl Padding="20" Style="{StaticResource PanelCard}">
+                    <StackPanel Spacing="16">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Border Background="#243B82F6" Style="{StaticResource GroupIconBox}">
+                                <FontIcon FontSize="14" Foreground="#3B82F6" Glyph="&#xE7B8;" />
+                            </Border>
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="游戏" />
                         </StackPanel>
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="游戏目录" />
+                                <TextBox
+                                    x:Name="DirBox"
+                                    IsReadOnly="True"
+                                    Text="读取中…" />
+                            </StackPanel>
+                            <Button
+                                x:Name="ChangeDirBtn"
+                                Grid.Column="1"
+                                VerticalAlignment="Bottom"
+                                Click="PickDir_Click"
+                                Content="更改…" />
+                            <Button
+                                x:Name="DetectBtn"
+                                Grid.Column="2"
+                                VerticalAlignment="Bottom"
+                                Click="Detect_Click"
+                                Content="重新检测" />
+                        </Grid>
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="账号" />
+                                <ComboBox
+                                    x:Name="AccountBox"
+                                    HorizontalAlignment="Stretch"
+                                    DisplayMemberPath="Label"
+                                    SelectionChanged="AccountBox_SelectionChanged" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="备注名" />
+                                <TextBox x:Name="NameBox" PlaceholderText="比如 主号" />
+                            </StackPanel>
+                            <Button
+                                Grid.Column="2"
+                                VerticalAlignment="Bottom"
+                                Click="SaveName_Click"
+                                Content="保存备注" />
+                        </Grid>
+
+                        <TextBlock
+                            x:Name="GameHint"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text=""
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </ContentControl>
+
+                <ContentControl
+                    Grid.Column="1"
+                    Padding="20"
+                    Style="{StaticResource PanelCard}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Margin="0,0,0,12" Orientation="Horizontal" Spacing="10">
+                            <Border Background="#248B5CF6" Style="{StaticResource GroupIconBox}">
+                                <FontIcon FontSize="14" Foreground="#8B5CF6" Glyph="&#xE8F1;" />
+                            </Border>
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="卡片数据" />
+                        </StackPanel>
+
+                        <!--
+                            中间这块用 * 行 + VerticalAlignment=Center：上下留白由布局算，
+                            窗口变高也不会一边多一边少（之前是写死间距，永远对不齐）。
+                        -->
+                        <Grid
+                            Grid.Row="1"
+                            Margin="0,4,0,4"
+                            ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel VerticalAlignment="Center" Spacing="3">
+                                <TextBlock
+                                    x:Name="IndexSummary"
+                                    Style="{StaticResource BodyTextBlockStyle}"
+                                    Text="读取中…"
+                                    TextWrapping="Wrap" />
+                                <TextBlock
+                                    x:Name="IndexBuilt"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text=""
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <StackPanel
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Spacing="8"
+                                ToolTipService.ToolTip="可用卡片按类型统计，颜色跟卡面一致">
+                                <StackPanel Spacing="3">
+                                    <Grid>
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="怪兽" />
+                                        <TextBlock
+                                            x:Name="KindMonsterText"
+                                            HorizontalAlignment="Right"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="—" />
+                                    </Grid>
+                                    <Grid
+                                        x:Name="KindMonsterBar"
+                                        Height="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="1*" />
+                                            <ColumnDefinition Width="0*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Background="#F0B563" CornerRadius="4" />
+                                        <Border
+                                            x:Name="KindMonsterTrack"
+                                            Grid.Column="1"
+                                            CornerRadius="4" />
+                                    </Grid>
+                                </StackPanel>
+                                <StackPanel Spacing="3">
+                                    <Grid>
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="魔法" />
+                                        <TextBlock
+                                            x:Name="KindSpellText"
+                                            HorizontalAlignment="Right"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="—" />
+                                    </Grid>
+                                    <Grid
+                                        x:Name="KindSpellBar"
+                                        Height="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="1*" />
+                                            <ColumnDefinition Width="0*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Background="#7FCEA3" CornerRadius="4" />
+                                        <Border
+                                            x:Name="KindSpellTrack"
+                                            Grid.Column="1"
+                                            CornerRadius="4" />
+                                    </Grid>
+                                </StackPanel>
+                                <StackPanel Spacing="3">
+                                    <Grid>
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="陷阱" />
+                                        <TextBlock
+                                            x:Name="KindTrapText"
+                                            HorizontalAlignment="Right"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="—" />
+                                    </Grid>
+                                    <Grid
+                                        x:Name="KindTrapBar"
+                                        Height="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="1*" />
+                                            <ColumnDefinition Width="0*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Background="#E39ED2" CornerRadius="4" />
+                                        <Border
+                                            x:Name="KindTrapTrack"
+                                            Grid.Column="1"
+                                            CornerRadius="4" />
+                                    </Grid>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!--  重建索引时才有：分阶段报文字，能算进度的就从不确定切成百分比  -->
+                        <StackPanel
+                            x:Name="IndexProgressPanel"
+                            Grid.Row="2"
+                            Margin="0,10,0,0"
+                            Spacing="6"
+                            Visibility="Collapsed">
+                            <ProgressBar
+                                x:Name="IndexBar"
+                                Height="4"
+                                CornerRadius="2"
+                                IsIndeterminate="True"
+                                Maximum="100"
+                                Minimum="0"
+                                Value="0" />
+                            <TextBlock
+                                x:Name="IndexStage"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="正在读取游戏数据…"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <InfoBar
+                            x:Name="IndexProblem"
+                            Grid.Row="3"
+                            Margin="0,10,0,0"
+                            IsClosable="False"
+                            IsOpen="False"
+                            Severity="Warning" />
+
                         <Button
-                            Grid.Column="1"
+                            x:Name="RebuildIndexButton"
+                            Grid.Row="4"
+                            Margin="0,14,0,0"
+                            HorizontalAlignment="Left"
                             VerticalAlignment="Bottom"
-                            Click="PickDir_Click"
-                            Content="更改…" />
-                        <Button
-                            Grid.Column="2"
-                            VerticalAlignment="Bottom"
-                            Click="Detect_Click"
-                            Content="重新检测" />
+                            Click="RebuildIndex_Click"
+                            Content="重建卡片数据" />
                     </Grid>
+                </ContentControl>
+            </Grid>
 
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="账号" />
-                            <ComboBox
-                                x:Name="AccountBox"
-                                HorizontalAlignment="Stretch"
-                                DisplayMemberPath="Label"
-                                SelectionChanged="AccountBox_SelectionChanged" />
+            <!--  第二行：运行 | 维护  -->
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1*" MinWidth="300" />
+                    <ColumnDefinition Width="1*" MinWidth="300" />
+                </Grid.ColumnDefinitions>
+
+                <ContentControl Padding="20" Style="{StaticResource PanelCard}">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Border Background="#2422A06B" Style="{StaticResource GroupIconBox}">
+                                <FontIcon FontSize="14" Foreground="#22A06B" Glyph="&#xE768;" />
+                            </Border>
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="运行" />
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Spacing="4">
-                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="备注名" />
-                            <TextBox x:Name="NameBox" PlaceholderText="比如 主号" />
-                        </StackPanel>
-                        <Button
-                            Grid.Column="2"
-                            VerticalAlignment="Bottom"
-                            Click="SaveName_Click"
-                            Content="保存备注" />
-                    </Grid>
-
-                    <TextBlock
-                        x:Name="GameHint"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Style="{StaticResource CaptionTextBlockStyle}"
-                        Text="" />
-                </StackPanel>
-            </ContentControl>
-
-            <!--  运行 / 维护：左右分栏  -->
-            <ContentControl Padding="20" Style="{StaticResource PanelCard}">
-                <Grid
-                    x:Name="RunMaintGrid"
-                    ColumnSpacing="20"
-                    RowSpacing="16">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <!--  左栏：运行  -->
-                    <StackPanel x:Name="LeftPanel" Spacing="12">
-                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="运行" />
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -109,7 +336,8 @@
                                 <TextBlock
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="只看流程，不写游戏文件。本次运行有效。" />
+                                    Text="只看流程，不写游戏文件。本次运行有效。"
+                                    TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch
                                 x:Name="DrySwitch"
@@ -118,21 +346,19 @@
                                 Toggled="DrySwitch_Toggled" />
                         </Grid>
                     </StackPanel>
+                </ContentControl>
 
-                    <!--  分隔线  -->
-                    <Rectangle
-                        x:Name="RunMaintDivider"
-                        Grid.Column="1"
-                        Width="1"
-                        HorizontalAlignment="Center"
-                        Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
-
-                    <!--  右栏：维护  -->
-                    <StackPanel
-                        x:Name="RightPanel"
-                        Grid.Column="2"
-                        Spacing="12">
-                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="维护" />
+                <ContentControl
+                    Grid.Column="1"
+                    Padding="20"
+                    Style="{StaticResource PanelCard}">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Border Background="#24E08B2A" Style="{StaticResource GroupIconBox}">
+                                <FontIcon FontSize="14" Foreground="#E08B2A" Glyph="&#xE72C;" />
+                            </Border>
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="维护" />
+                        </StackPanel>
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -171,48 +397,344 @@
                                 TextWrapping="Wrap" />
                         </StackPanel>
                     </StackPanel>
-                </Grid>
-            </ContentControl>
+                </ContentControl>
+            </Grid>
 
-            <!--  关于  -->
+            <!--  第三行：高级设置 | 额外组件（各自按内容高度，不拉平）  -->
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1*" MinWidth="300" />
+                    <ColumnDefinition Width="1*" MinWidth="300" />
+                </Grid.ColumnDefinitions>
+
+                <ContentControl
+                    Padding="20"
+                    VerticalAlignment="Top"
+                    Style="{StaticResource PanelCard}">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Border Background="#2494A3B8" Style="{StaticResource GroupIconBox}">
+                                <FontIcon FontSize="14" Foreground="#64748B" Glyph="&#xE713;" />
+                            </Border>
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="高级设置" />
+                        </StackPanel>
+                        <Grid MinHeight="58" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Spacing="2">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="低清纹理兼容" />
+                                    <TextBlock
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Style="{StaticResource CaptionTextBlockStyle}"
+                                        Text="属于动画与特效页"
+                                        VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="生成召唤动画时，低清（SD）贴图也一起重写。只写单页贴图，超出上限会提示。"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="CompatSdSwitch"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Toggled="CompatSdSwitch_Toggled"
+                                ToolTipService.ToolTip="默认关：低画质档保留原样，省一次大图编码。开了低画质档也播你自己那套。视频、帧文件夹与 Spine 导入两条路都按这个走。" />
+                        </Grid>
+                    </StackPanel>
+                </ContentControl>
+
+                <ContentControl
+                    Grid.Column="1"
+                    Padding="20"
+                    VerticalAlignment="Top"
+                    Style="{StaticResource PanelCard}">
+                    <StackPanel Spacing="12">
+                        <StackPanel
+                            Orientation="Horizontal"
+                            Spacing="10"
+                            ToolTipService.ToolTip="按需下载。只影响用得上它的功能，没装也能正常用其他部分。">
+                            <Border Background="#2494A3B8" Style="{StaticResource GroupIconBox}">
+                                <FontIcon FontSize="14" Foreground="#94A3B8" Glyph="&#xE896;" />
+                            </Border>
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="额外组件" />
+                            <Button
+                                x:Name="AssetsMoreBtn"
+                                Margin="0,0,0,0"
+                                Padding="9,2,9,2"
+                                MinHeight="24"
+                                HorizontalAlignment="Right"
+                                Background="Transparent"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                Click="AssetsMore_Click"
+                                FontSize="12"
+                                Visibility="Collapsed" />
+                        </StackPanel>
+                        <StackPanel x:Name="AssetsPanel" Spacing="8" />
+                        <StackPanel
+                            x:Name="AssetsMore"
+                            Spacing="8"
+                            Visibility="Collapsed" />
+                    </StackPanel>
+                </ContentControl>
+            </Grid>
+
+            <!--  关于：左边统计，右边 30 天热力  -->
             <ContentControl Padding="20" Style="{StaticResource PanelCard}">
-                <StackPanel Spacing="8">
-                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="关于" />
-                    <Grid ColumnSpacing="24" RowSpacing="6">
+                <StackPanel Spacing="14">
+                    <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="版本" />
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Border Background="#2494A3B8" Style="{StaticResource GroupIconBox}">
+                                <FontIcon FontSize="14" Foreground="#94A3B8" Glyph="&#xE946;" />
+                            </Border>
+                            <TextBlock Style="{StaticResource GroupTitle}" Text="关于" />
+                        </StackPanel>
                         <TextBlock
                             x:Name="VersionText"
                             Grid.Column="1"
-                            Text="—" />
-                        <TextBlock
-                            Grid.Row="1"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            FontFamily="Consolas"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="日志目录" />
-                        <TextBlock
-                            x:Name="JournalText"
-                            Grid.Row="1"
-                            Grid.Column="1"
                             IsTextSelectionEnabled="True"
-                            Text="—"
-                            TextWrapping="Wrap" />
-                        <TextBlock
-                            Grid.Row="2"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="记录数" />
-                        <TextBlock
-                            x:Name="RecordsText"
-                            Grid.Row="2"
-                            Grid.Column="1"
+                            Style="{StaticResource CaptionTextBlockStyle}"
                             Text="—" />
+                    </Grid>
+
+                    <Grid ColumnSpacing="22">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="366" />
+                        </Grid.ColumnDefinitions>
+
+                        <!--  左：四个数 + 占比条  -->
+                        <StackPanel Spacing="14">
+                            <Grid ColumnSpacing="12" RowSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1*" />
+                                    <ColumnDefinition Width="1*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Border Style="{StaticResource StatTile}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource StatLabel}" Text="自改动画" />
+                                        <TextBlock
+                                            x:Name="StatCutinText"
+                                            Style="{StaticResource StatValue}"
+                                            Text="—" />
+                                    </StackPanel>
+                                </Border>
+                                <Border
+                                    Grid.Column="1"
+                                    Style="{StaticResource StatTile}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource StatLabel}" Text="自改特效" />
+                                        <TextBlock
+                                            x:Name="StatRunfxText"
+                                            Style="{StaticResource StatValue}"
+                                            Text="—" />
+                                    </StackPanel>
+                                </Border>
+                                <Border
+                                    Grid.Row="1"
+                                    Style="{StaticResource StatTile}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource StatLabel}" Text="自改超框" />
+                                        <TextBlock
+                                            x:Name="StatArtText"
+                                            Style="{StaticResource StatValue}"
+                                            Text="—" />
+                                    </StackPanel>
+                                </Border>
+                                <Border
+                                    Grid.Row="1"
+                                    Grid.Column="1"
+                                    Style="{StaticResource StatTile}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource StatLabel}" Text="备份占用" />
+                                        <StackPanel Margin="0,2,0,0" Orientation="Horizontal" Spacing="4">
+                                            <TextBlock
+                                                x:Name="StatBackupText"
+                                                FontSize="24"
+                                                Text="—" />
+                                            <TextBlock
+                                                VerticalAlignment="Bottom"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Text="MB" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <StackPanel Spacing="7">
+                                <Grid
+                                    x:Name="MixBar"
+                                    Height="8"
+                                    ColumnSpacing="2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1*" />
+                                        <ColumnDefinition Width="1*" />
+                                        <ColumnDefinition Width="1*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Background="#06B6D4" CornerRadius="4,0,0,4" />
+                                    <Border
+                                        Grid.Column="1"
+                                        Background="#E08B2A" />
+                                    <Border
+                                        Grid.Column="2"
+                                        Background="#8B5CF6"
+                                        CornerRadius="0,4,4,0" />
+                                </Grid>
+                                <StackPanel
+                                    x:Name="MixLegend"
+                                    Orientation="Horizontal"
+                                    Spacing="16">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Border
+                                            Width="8"
+                                            Height="8"
+                                            VerticalAlignment="Center"
+                                            Background="#06B6D4"
+                                            CornerRadius="2" />
+                                        <TextBlock
+                                            x:Name="MixCutinText"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="动画" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Border
+                                            Width="8"
+                                            Height="8"
+                                            VerticalAlignment="Center"
+                                            Background="#E08B2A"
+                                            CornerRadius="2" />
+                                        <TextBlock
+                                            x:Name="MixRunfxText"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="特效" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Border
+                                            Width="8"
+                                            Height="8"
+                                            VerticalAlignment="Center"
+                                            Background="#8B5CF6"
+                                            CornerRadius="2" />
+                                        <TextBlock
+                                            x:Name="MixArtText"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="超框" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <TextBlock
+                                    x:Name="MixEmpty"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="还没有改动。"
+                                    Visibility="Collapsed" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!--  右：最近 30 天（3 行 10 列，最后一个是今天）  -->
+                        <Border
+                            Grid.Column="1"
+                            Padding="12,12,14,12"
+                            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="8">
+                            <StackPanel Spacing="8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="最近 30 天" />
+                                    <TextBlock
+                                        x:Name="HeatTotalText"
+                                        Grid.Column="1"
+                                        Margin="8,0,0,0"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Style="{StaticResource CaptionTextBlockStyle}"
+                                        Text="共 0 次" />
+                                    <StackPanel
+                                        Grid.Column="2"
+                                        Orientation="Horizontal"
+                                        Spacing="3">
+                                        <TextBlock
+                                            VerticalAlignment="Center"
+                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="少" />
+                                        <Border
+                                            x:Name="HeatKey1"
+                                            Width="10"
+                                            Height="10"
+                                            VerticalAlignment="Center"
+                                            CornerRadius="2" />
+                                        <Border
+                                            x:Name="HeatKey2"
+                                            Width="10"
+                                            Height="10"
+                                            VerticalAlignment="Center"
+                                            CornerRadius="2" />
+                                        <Border
+                                            x:Name="HeatKey3"
+                                            Width="10"
+                                            Height="10"
+                                            VerticalAlignment="Center"
+                                            CornerRadius="2" />
+                                        <Border
+                                            x:Name="HeatKey4"
+                                            Width="10"
+                                            Height="10"
+                                            VerticalAlignment="Center"
+                                            CornerRadius="2" />
+                                        <Border
+                                            x:Name="HeatKey5"
+                                            Width="10"
+                                            Height="10"
+                                            VerticalAlignment="Center"
+                                            CornerRadius="2" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid
+                                    x:Name="HeatGrid"
+                                    ColumnSpacing="4"
+                                    RowSpacing="4" />
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Style="{StaticResource CaptionTextBlockStyle}"
+                                        Text="30 天前" />
+                                    <TextBlock
+                                        x:Name="HeatTodayText"
+                                        Grid.Column="2"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Style="{StaticResource CaptionTextBlockStyle}"
+                                        Text="今天" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
                     </Grid>
                 </StackPanel>
             </ContentControl>

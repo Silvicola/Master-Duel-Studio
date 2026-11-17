@@ -21,10 +21,46 @@
                     <SolidColorBrush x:Key="PanelFillBrush" Color="#FCFCFC" />
                     <!-- 分区描边：只加实边缘，不改底色 -->
                     <SolidColorBrush x:Key="WellBorderBrush" Color="#D8D8D8" />
+                    <!-- 历史页四档类别配色（浅色版，2026-11-17 用户定稿：组 1）。
+                         动画紫 / 特效青 / 超框玫粉 / 复原与其他灰。
+                         每档 Badge 浅底 / Text 深字 / Bar 浅色条；Other 兼作复原徽标。
+                         暗色版在下面的 Dark 字典里，键名一一对应。 -->
+                    <SolidColorBrush x:Key="HistBadgeAnim" Color="#EEEDFE" />
+                    <SolidColorBrush x:Key="HistTextAnim" Color="#3C3489" />
+                    <SolidColorBrush x:Key="HistBarAnim" Color="#AFA9EC" />
+                    <SolidColorBrush x:Key="HistBadgeFx" Color="#E1F5EE" />
+                    <SolidColorBrush x:Key="HistTextFx" Color="#04342C" />
+                    <SolidColorBrush x:Key="HistBarFx" Color="#5DCAA5" />
+                    <SolidColorBrush x:Key="HistBadgeArt" Color="#FBEAF0" />
+                    <SolidColorBrush x:Key="HistTextArt" Color="#4B1528" />
+                    <SolidColorBrush x:Key="HistBarArt" Color="#ED93B1" />
+                    <SolidColorBrush x:Key="HistBadgeOther" Color="#F1EFE8" />
+                    <SolidColorBrush x:Key="HistTextOther" Color="#5F5E5A" />
+                    <SolidColorBrush x:Key="HistBarOther" Color="#D3D1C7" />
+                    <!--  历史页筛选胶囊的选中态  -->
+                    <SolidColorBrush x:Key="ChipCheckedBgBrush" Color="#E6F1FB" />
+                    <SolidColorBrush x:Key="ChipCheckedBorderBrush" Color="#378ADD" />
+                    <SolidColorBrush x:Key="ChipCheckedTextBrush" Color="#0C447C" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Dark">
                     <SolidColorBrush x:Key="PanelFillBrush" Color="#2B2B2B" />
                     <SolidColorBrush x:Key="WellBorderBrush" Color="#3F3F3F" />
+                    <!-- 暗色版：同色系的深底 + 亮字，色条取中间阶，避免浅色块发亮 -->
+                    <SolidColorBrush x:Key="HistBadgeAnim" Color="#3C3489" />
+                    <SolidColorBrush x:Key="HistTextAnim" Color="#CECBF6" />
+                    <SolidColorBrush x:Key="HistBarAnim" Color="#534AB7" />
+                    <SolidColorBrush x:Key="HistBadgeFx" Color="#04342C" />
+                    <SolidColorBrush x:Key="HistTextFx" Color="#5DCAA5" />
+                    <SolidColorBrush x:Key="HistBarFx" Color="#0F6E56" />
+                    <SolidColorBrush x:Key="HistBadgeArt" Color="#4B1528" />
+                    <SolidColorBrush x:Key="HistTextArt" Color="#F4C0D1" />
+                    <SolidColorBrush x:Key="HistBarArt" Color="#993556" />
+                    <SolidColorBrush x:Key="HistBadgeOther" Color="#444441" />
+                    <SolidColorBrush x:Key="HistTextOther" Color="#D3D1C7" />
+                    <SolidColorBrush x:Key="HistBarOther" Color="#5F5E5A" />
+                    <SolidColorBrush x:Key="ChipCheckedBgBrush" Color="#0C447C" />
+                    <SolidColorBrush x:Key="ChipCheckedBorderBrush" Color="#185FA5" />
+                    <SolidColorBrush x:Key="ChipCheckedTextBrush" Color="#B5D4F4" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
 
@@ -41,6 +77,16 @@
             <SolidColorBrush x:Key="ElevationShadowBrush" Color="Black" />
             <!-- 导航选中底色：跟随系统强调色 -->
             <SolidColorBrush x:Key="NavSelectedBackground" Color="{ThemeResource SystemAccentColor}" Opacity="0.14" />
+
+            <!--
+                忙碌遮罩上的「取消」。动画页和卡图页共用这一套，改这里两处一起变。
+                遮罩是 Smoke 深色层，普通按钮压上去几乎看不见，而这是遮罩里唯一能点的
+                东西，必须一眼找到，所以用强调色底、比常规按钮高一点。
+            -->
+            <Style x:Key="OverlayCancelButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+                <Setter Property="MinWidth" Value="96" />
+                <Setter Property="Height" Value="36" />
+            </Style>
 
             <!--
                 带柔和投影的面板容器，外观与卡片页两个主面板一致：

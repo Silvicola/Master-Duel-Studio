@@ -7,6 +7,7 @@
     game_dir   游戏根目录 (含 LocalData 的那一层)
     account    LocalData/<account>/0000 里的 <account>
     names      账号备注名 {"<account>": "主号"}, 存档是加密的取不到玩家名, 只能自己起
+    compat_sd  生成召唤动画时连低清(SD)贴图一起重写. 默认 False: 低清档留着底盘那套
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from pathlib import Path
 
 from mdstudio import runtime
 
-DEFAULTS: dict = {"game_dir": "", "account": "", "names": {}}
+DEFAULTS: dict = {"game_dir": "", "account": "", "names": {}, "compat_sd": False}
 
 
 def path() -> Path:
@@ -23,7 +24,7 @@ def path() -> Path:
 
 
 def load() -> dict:
-    out = {"game_dir": "", "account": "", "names": {}}
+    out = {"game_dir": "", "account": "", "names": {}, "compat_sd": False}
     f = path()
     if not f.is_file():
         return out
@@ -39,6 +40,8 @@ def load() -> dict:
         names = raw.get("names")
         if isinstance(names, dict):
             out["names"] = {str(a): str(n) for a, n in names.items() if n}
+        if isinstance(raw.get("compat_sd"), bool):
+            out["compat_sd"] = raw["compat_sd"]
     return out
 
 
@@ -53,6 +56,8 @@ def save(**kw) -> None:
             cur[k] = "" if v is None else str(v)
         elif k == "names" and isinstance(v, dict):
             cur["names"] = {str(a): str(n) for a, n in v.items() if n}
+        elif k == "compat_sd":
+            cur["compat_sd"] = bool(v)
     f = path()
     try:
         f.parent.mkdir(parents=True, exist_ok=True)

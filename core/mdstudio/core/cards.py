@@ -15,9 +15,7 @@ import unicodedata
 import zlib
 
 import numpy as np
-import UnityPy
 
-from mdstudio.core.crc import get_crc
 from mdstudio.core.journal import home_dir
 from mdstudio.errors import AssetMissing
 from mdstudio.i18n import tr
@@ -27,7 +25,12 @@ log = logging.getLogger("mdstudio")
 _CONST = 0x23D          # 公式里的固定常数, 不是 key
 _KEY_LIMIT = 0x400      # key 每次大更新会变, 历史最大 0x25F
 _SIZE_HINT = 116419     # CARD_Name bundle 大概这么大, 扫的时候按接近程度排序
+# 游戏支持的语言，探测 16hex 目录时逐个试。只影响首次定位，命中就记进缓存。
+_LANGS = ("en-US", "ja-JP", "zh-CN", "zh-TW", "ko-KR", "de-DE", "fr-FR", "it-IT",
+          "es-ES", "es-MX", "pt-BR", "ru-RU")
 _CONTAINER_RE = re.compile(rb"card/data/([0-9a-f]{16})/([a-z]{2}-[a-z]{2,4})/card_name")
+# data.unity3d 里只留了目录，没有 card_name 这一级（文件名是 crc），所以这里放宽
+_UNITY_DIR_RE = re.compile(rb"card/data/([0-9a-f]{16})/([a-z]{2}-[a-z]{2,4})")
 
 
 def _keystream(n: int, key: int) -> np.ndarray:
@@ -54,6 +57,7 @@ def find_key(enc: bytes) -> int:
 
 
 def _textasset(data: bytes) -> bytes:
+    import UnityPy      # 惰性导入：命中索引缓存时用不到它，导入一次要 0.9 秒
     for o in UnityPy.load(data).objects:
         if o.type.name == "TextAsset":
             s = o.read().m_Script
@@ -73,58 +77,8 @@ def fold(s: str) -> str:
     return re.sub(r"[^\w]+", " ", s).strip()
 
 
-_REAL_CACHE = "real_ids.json"
-
-# 卡名表里名字就叫「未知」的空号（游戏里不是真卡，无法使用/修改）：3001、21219。
-# 只排名字 **完全等于** 它们的号；名字里含「未知」的真卡（如「未知青蛙」「未知同步士」）
-# 不受影响。再用真卡号集合兜底，万一哪天官方真出了个叫「未知」的卡也不会被误删。
-_HIDDEN_NAMES = {"未知", "unknown", "Unknown"}
-
-
-def real_card_ids(game) -> set:
-    """游戏认可的真卡号: card_rarity_asset 的键
-
-    游戏内部另有一套"占位副本号", 名字和卡图跟真卡一模一样, 但渲染时不走它,
-    改它等于白改. 这些号不在稀有度表里; 异画的两个号都在表里. 所以这张表
-    能把占位号和异画分开, 不会误伤异画.
-
-    按 data.unity3d 的大小 + 修改时间缓存, 游戏更新后自动重建.
-    """
-    p = game.dir / "masterduel_Data" / "data.unity3d"
-    if not p.is_file():
-        return set()
-    fp = [p.stat().st_size, int(p.stat().st_mtime)]
-    cache = home_dir() / game.install_id / _REAL_CACHE
-    if cache.is_file():
-        try:
-            d = json.loads(cache.read_text(encoding="utf-8"))
-            if d.get("fp") == fp:
-                return {int(c) for c in d["ids"]}
-        except (OSError, ValueError, KeyError):
-            pass
-    ids = set()
-    for o in UnityPy.load(p.read_bytes()).objects:
-        if o.type.name != "TextAsset":
-            continue
-        try:
-            d = o.read()
-        except Exception:
-            continue
-        if str(d.m_Name) != "card_rarity_asset":
-            continue
-        s = d.m_Script
-        raw = s.encode("utf-8", "surrogateescape") if isinstance(s, str) else bytes(s)
-        # 每条 4 字节: 卡号(uint16) + 稀有度(uint16), 只要卡号
-        ids = {int.from_bytes(raw[i:i + 2], "little") for i in range(0, len(raw) - 3, 4)}
-        break
-    try:
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cache.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"fp": fp, "ids": sorted(ids)}), encoding="utf-8")
-        os.replace(tmp, cache)
-    except OSError as e:
-        log.warning(tr("can't save the real card id cache: %s"), e)
-    return ids
+# 卡号、卡型、稀有度、超框关系的查询统一走 core/cardindex.py 的动态索引；
+# 这里只留卡名表与解密工具，供索引定位语言与 16hex 目录时复用。
 
 
 class CardDB:
@@ -135,9 +89,21 @@ class CardDB:
         self._auto = lang is None
         self.names = {}           # id -> name
         self._folded = []         # [(id, folded name)]
-        self._real = None         # 真卡号集合, 第一次问的时候才读
-        self._toks = None         # 衍生物号集合, 第一次问的时候才从 CARD_Prop 解
+        self._folder = None       # CARD_Name 所在的那个 16hex 目录, load() 里定下来
+        self._index = None        # 动态卡片索引, 第一次查询时才挂上
         self._cache = home_dir() / game.install_id / f"cards_{lang or 'auto'}.json"
+
+    def _idx(self):
+        """全字段索引。索引构建失败也返回对象，调用方按 ok 决定是否放行写入。"""
+        if self._index is None:
+            try:
+                from mdstudio.core.cardindex import CardIndex
+                self._index = CardIndex.ensure(self.game, self.lang)
+            except Exception as e:
+                log.warning(tr("card index unavailable: %s"), e)
+                from mdstudio.core.cardindex import CardIndex
+                self._index = CardIndex(self.game, self.lang)
+        return self._index
 
     # ---- 定位 ----
     def _paths(self, folder):
@@ -161,6 +127,31 @@ class CardDB:
         return False
 
     def _probe_folder(self):
+        return self._probe_from_unity3d() or self._probe_by_bundles()
+
+    def _probe_from_unity3d(self):
+        """data.unity3d 里就写着卡名数据在哪个 16hex 目录，不必翻 4 万个 bundle。
+
+        实测这条路 90 ms，逐个解包的旧路要 6.5 秒（用户重装游戏、文件还冷时更久）。
+        游戏只把当前语言那一份下到 LocalData，所以目录名能直接读到、语言得逐个试：
+        每个候选只花一次 stat（crc 命中即中），试不中也才十几毫秒。
+        """
+        p = self.game.dir / "masterduel_Data" / "data.unity3d"
+        try:
+            raw = p.read_bytes()
+        except OSError:
+            return None
+        dirs = sorted({m for m in _UNITY_DIR_RE.findall(raw)})
+        for folder, _ in dirs:
+            folder = folder.decode()
+            for cand in _LANGS:
+                if self._accept(folder, cand.lower()):
+                    return folder
+        return None
+
+    def _probe_by_bundles(self):
+        """兜底：data.unity3d 里找不到时，按大小逐个解 bundle 翻容器名。慢但可靠。"""
+        import UnityPy
         files = [p for d in self.game.root.iterdir() if d.is_dir() for p in d.iterdir()]
         files.sort(key=lambda p: abs(p.stat().st_size - _SIZE_HINT))
         for p in files[:6000]:
@@ -198,6 +189,7 @@ class CardDB:
         if cached and not self.lang:
             self.lang = cached.get("lang")
         if self._ok(folder) and cached.get("fp") == self._fingerprint(folder):
+            self._folder = folder
             self._set({int(k): v for k, v in cached["names"].items()})
             return self
         if not self._ok(folder):
@@ -215,6 +207,7 @@ class CardDB:
         key = find_key(enc_name)
         names = _split(text_decrypt(_textasset(paths["indx"].read_bytes()), key), text_decrypt(enc_name, key))
         ids = []
+        import UnityPy
         for o in UnityPy.load(paths["font"].read_bytes()).objects:
             if o.type.name == "MonoBehaviour":
                 tt = o.read_typetree()
@@ -226,6 +219,7 @@ class CardDB:
         # 两个列表顺序一一对应 (CardTextStudio 那边验证过)
         id2name = {cid: nm.strip() for cid, nm in zip(ids, names) if cid and cid > 0 and nm.strip()}
         meta = {"folder": folder, "lang": self.lang, "fp": self._fingerprint(folder), "key": key}
+        self._folder = folder
         try:
             # 缓存坏了也只是下次多扫一遍, 写不进去不影响这次用
             self._cache.parent.mkdir(parents=True, exist_ok=True)
@@ -256,113 +250,51 @@ class CardDB:
         return sorted(self._by_name[nm]) if nm else [int(cid)]
 
     def placeholder_of(self, cid: int) -> int:
-        """占位副本号返回游戏真正渲染的那个号, 其余(含异画)返回 0
-
-        判据: 自己不在真卡名单, 而同名的另一个号在. 异画两个号都在名单里,
-        所以选异画不会触发. 没有同名兄弟的孤号也不动, 免得把衍生物之类的误判.
-        """
-        cid = int(cid)
-        nm = self.names.get(cid, "")
-        if not nm:
-            return 0
-        if self._real is None:
-            self._real = real_card_ids(self.game)
-        if not self._real or cid in self._real:
-            return 0
-        for sib in self._by_name.get(nm, ()):
-            if sib != cid and sib in self._real:
-                return int(sib)
-        return 0
+        """占位副本号返回游戏真正渲染的那个号, 其余(含异画)返回 0。"""
+        return self._idx().placeholder_of(cid)
 
     def _visible(self, cid: int) -> bool:
-        """这张号该不该出现在列表/搜索里。
-
-        排掉两类不是真卡的东西：
-          - 名字叫「未知」的空号（真卡同名才留，防误杀）；
-          - 不存在的隐藏卡：CARD_Prop 类型 10/49，但名字不是「衍生物」（如 22591
-            「妖精的王子大人」，只在 #22542 的效果里替换卡名）。真衍生物（名字带
-            「衍生物/Token」）保留，它们能被召唤。
-        """
-        cid = int(cid)
-        nm = self.names.get(cid, "")
-        if nm in _HIDDEN_NAMES:
-            if self._real is None:
-                self._real = real_card_ids(self.game)
-            return cid in self._real
-        toks = self._token_ids()
-        if toks and cid in toks and not ("衍生物" in nm or "Token" in nm or "token" in nm):
-            return False
-        return True
+        """可见性由动态索引给：无卡名无卡图的预留号、空号、临时特殊卡名都隐藏。"""
+        row = self._idx().row(cid)
+        return bool(row.get("visible")) if row else False
 
     def visible_names(self) -> dict:
-        """过滤掉「未知」空号后的 id -> name。给「列出全部卡」这种全量遍历用，
-        保证和 search() 一样的可见性规则（否则空搜索列表里还会冒出 3001/21219）。"""
-        return {cid: nm for cid, nm in self.names.items() if self._visible(cid)}
+        """给「列出全部卡」用，跟 search() 同一套可见性规则。"""
+        return self._idx().visible_names()
 
-    def _token_ids(self) -> set:
-        """类型 10 / 49 的卡号集合（衍生物，以及少数「不存在的隐藏卡」），从游戏 CARD_Prop 解。
+    # ---- 卡种（怪兽 / 魔法 / 陷阱） ----
 
-        每张卡 8 字节，第 3 字节（bits 18-23）是卡类型；实测（用 3900/3915 两个衍生物
-        反推验证）类型 = 该字节 & 0x3F，10 = 衍生物（非效果）、49 = 衍生物/调整。
-        注意游戏把这类号归得比较粗：它同时收进了「妖精的王子大人」(22591) 这种只用于
-        效果替换卡名、实际不存在的隐藏卡，所以这里叫「不可当实卡处理」的号更准确。
-        只在第一次问时解一遍，缓存在实例上；解不出来返回空集，由调用方走兜底。
+    def type_code(self, cid: int) -> int:
+        """CARD_Prop 第 3 字节原值，从动态索引取。
+
+        索引按卡号并集构建，超框变体查不到自己数据时跟着 of_card_asset 的底图走，
+        并且把这类值标成 inferred。卡种、卡框、可见性统一走同一份索引。
         """
-        if getattr(self, "_toks", None) is not None:
-            return self._toks
-        self._toks = set()
-        cache = getattr(self, "_cache", None)
-        try:
-            meta = json.loads(cache.read_text(encoding="utf-8"))
-            folder = meta.get("folder")
-            lang = meta.get("lang") or self.lang
-        except (AttributeError, OSError, ValueError):
-            return self._toks
-        if not (folder and lang):
-            return self._toks
-        p = self.game.find_logical(f"Card/Data/{folder}/{lang}/CARD_Prop")
-        if not p:
-            return self._toks
-        try:
-            enc = _textasset(p.read_bytes())
-            dec = text_decrypt(enc, find_key(enc))
-        except Exception:      # 解不开就当没有，别让搜索整个挂掉
-            return self._toks
-        toks = set()
-        for i in range(0, len(dec) - 7, 8):
-            if (dec[i + 2] & 0x3F) in (10, 49):
-                toks.add(dec[i] | (dec[i + 1] << 8))
-        self._toks = toks
-        return toks
+        return self._idx().frame_code(cid)
+
+    def frame_code(self, cid: int) -> int:
+        """CARD_Prop 第 3 字节原值，卡图页用它挑卡框。查不到返回 -1。
+
+        卡框不能只看卡种（怪兽/魔法/陷阱）：融合、同调、超量、灵摆各是另一套框。
+        这个字节的低 6 位就是游戏自己的卡种枚举，高 2 位是标志位。
+        """
+        return self.type_code(cid)
+
+    def kind(self, cid: int) -> str:
+        """卡种：`monster` / `spell` / `trap`；游戏数据里确实没有这个号时返回空串。"""
+        return self._idx().kind(cid)
+
+    def is_plain(self, cid: int) -> bool:
+        """通常怪兽 / 衍生物：游戏不会给这类卡做发动特效，特效搜索里该剔掉。"""
+        return self._idx().is_plain(cid)
 
     def is_unreleased(self, cid: int) -> bool:
-        """这张卡是不是「新卡还没上线」。
+        """新卡还没上线：有卡名但不在稀有度表，且不是占位、衍生物、隐藏卡或空号。
 
-        判据：在卡名表里有名字，但不在稀有度表（card_rarity_asset）里，也就是包里开不到、
-        也合成不了。排除三类不属于「未上线」的号：
-          - 占位卡（有同名真卡兄弟，内容其实已上线）；
-          - 衍生物与「不存在的隐藏卡」（CARD_Prop 类型位 10/49，如 22591 妖精的王子大人；
-            解不到数据时退回「名字带衍生物或 39xx 段」）；
-          - 「未知」空号。
-        游戏更新后稀有度表会重算，新卡一旦上线这个判断自动变 False，不用改代码。
+        判据在动态索引里，按「这个号出现在哪些表」算，不写号段。游戏更新后
+        稀有度表一变，索引重建，这个判断自动跟着变。
         """
-        cid = int(cid)
-        nm = self.names.get(cid)
-        if not nm or nm in _HIDDEN_NAMES:
-            return False
-        if self._real is None:
-            self._real = real_card_ids(self.game)
-        if not self._real or cid in self._real:
-            return False
-        if self.placeholder_of(cid):
-            return False
-        toks = self._token_ids()
-        if toks:
-            if cid in toks:
-                return False
-        elif "衍生物" in nm or "Token" in nm or "token" in nm or 3900 <= cid < 4000:
-            return False
-        return True
+        return self._idx().is_unreleased(cid)
 
     def search(self, query: str, limit: int = 50) -> list:
         """数字 = 按 id; 否则所有词都要出现在名字里. 排序: 完全一致 > 开头一致 > 词开头 > 其他"""

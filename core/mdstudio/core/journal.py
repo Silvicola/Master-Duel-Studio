@@ -9,14 +9,24 @@ import shutil
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
 
 from mdstudio import runtime
+from mdstudio.core.baseline import BASELINE, Baselines, family_for
 from mdstudio.errors import MDStudioError
 from mdstudio.i18n import tr
 
 
 RENAMED_OPS = {"cutin.mdpro3": "cutin.spine"}
+
+# 活动计数只留这么多天（比界面上的 30 天多一倍，切账号/跨月都够用），文件不会越写越大
+ACTIVITY_KEEP_DAYS = 60
+
+
+def activity_day(ts: float) -> str:
+    """本地时间的 YYYY-MM-DD。热力图按天聚合用这个，别用 UTC，不然晚上十点后的算到第二天。"""
+    return time.strftime("%Y-%m-%d", time.localtime(ts))
 
 
 def home_dir() -> Path:
@@ -116,6 +126,8 @@ class Journal:
         self.folder = Path(folder)
         self.file = self.folder / "journal.json"
         self.backups = self.folder / "backups"
+        # 基线层与 journal 同级，跟着账号走：一张卡的某一类改动只留一份「动手前的样子」
+        self.baselines = Baselines(self.folder / "baselines")
 
     @classmethod
     def for_game(cls, game):
@@ -153,6 +165,7 @@ class Journal:
         recs = self.load()
         recs.append(rec)
         self._save(recs)
+        self.bump_activity()
 
     def update(self, changed):
         by_id = {r.id: r for r in changed}
@@ -168,7 +181,73 @@ class Journal:
     def for_card(self, card: int, ops=None) -> list:
         return [r for r in self.load() if r.card == card and (ops is None or r.op in ops)]
 
+    # ------------------------------------------------------------ 活动计数
+    # 热力图要的是「哪天干了多少活」，而记录会被复原删掉。所以单独存一份只增不减的
+    # 每日计数，跟 journal 放在同一个账号目录里：切账号 = 换一张热力图。
+    def _activity_file(self) -> Path:
+        return self.folder / "activity.json"
+
+    def _save_activity(self, days: dict) -> None:
+        """写盘。顺带剪掉超过 ACTIVITY_KEEP_DAYS 的旧日期，文件不会无限长。
+
+        日期是 YYYY-MM-DD，字符串比较就是日期比较，不用解析。
+        """
+        cutoff = (date.today() - timedelta(days=ACTIVITY_KEEP_DAYS)).isoformat()
+        keep = {d: int(n) for d, n in days.items() if d >= cutoff and int(n) > 0}
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            tmp = self._activity_file().with_suffix(".tmp")
+            tmp.write_text(json.dumps({"days": keep}, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self._activity_file())
+        except OSError:
+            pass          # 写不进就算了，热力图少一天不影响任何功能
+
+    def activity(self) -> dict:
+        """{"2026-11-16": 3, ...}。文件不存在时用现有记录回填一次。"""
+        f = self._activity_file()
+        if f.is_file():
+            try:
+                raw = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {}
+            days = raw.get("days") if isinstance(raw, dict) else None
+            if not isinstance(days, dict):
+                return {}
+            return {str(k): int(v) for k, v in days.items()
+                    if isinstance(v, (int, float)) and int(v) > 0}
+        # 第一次跑：拿还在的记录补一遍，否则老用户的热力图是空白一片
+        days: dict = {}
+        try:
+            for r in self.load():
+                d = activity_day(r.time)
+                days[d] = days.get(d, 0) + 1
+        except MDStudioError:
+            days = {}          # 记录坏了不该连带热力图一起罢工
+        self._save_activity(days)
+        return days
+
+    def bump_activity(self) -> None:
+        """记一次折腾（改游戏文件或复原）。"""
+        days = self.activity()
+        d = date.today().isoformat()
+        days[d] = days.get(d, 0) + 1
+        self._save_activity(days)
+
+    def activity_days(self, n: int = 30) -> list:
+        """最近 n 天，从早到晚：[{"date": "2026-10-18", "count": 0}, ...]"""
+        days = self.activity()
+        today = date.today()
+        return [{"date": d.isoformat(), "count": int(days.get(d.isoformat(), 0))}
+                for d in (today - timedelta(days=i) for i in range(n - 1, -1, -1))]
+
     def backup(self, rec: Record, src: Path, rel: str, dry_run=False):
+        """记下这个文件被改之前的样子。
+
+        基线层（2026-11-13）：一张卡的某一类改动只留第一份。以前每条记录各存一份，
+        第二份的内容是上一次的输出 —— 撤销按时间倒序还原，后写的盖先写的，那份
+        永远读不到，只是白占磁盘（一次召唤动画约 238MB）。现在第一次碰这个文件
+        时存进 `baselines/<卡>/<族>/`，之后同一族的写入只打标记不复制。
+        """
         # 同一条记录里同一文件只备份第一次 (= 改动前的样子)
         if rel in rec.modified:
             return
@@ -183,19 +262,37 @@ class Journal:
             if not shared.is_file():
                 shutil.copy2(src, shared)
             return
-        name = rel.replace("/", "_")
-        rec.modified[rel] = name
-        if dry_run:
+        fam = family_for(rec.op)
+        if self.baselines.has(rec.card, fam, rel):
+            # 这张卡这一族已经存过基线：不再复制，撤销时统一从基线写回
+            rec.modified[rel] = BASELINE
             return
-        d = self.backups / rec.id
-        d.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, d / name)
+        self.baselines.touch(rec.card, fam, Path(src), rel, dry_run)
+        rec.modified[rel] = BASELINE
 
     def backup_path(self, rec: Record, rel: str) -> Path:
         return self.backups / rec.id / rec.modified[rel]
 
-    def restore_source(self, rec: Record, rel: str) -> Path:
-        """撤销时这张文件从哪还原：普通文件用本记录的备份，安装根大文件用共享备份。"""
+    def restore_source(self, rec: Record, rel: str):
+        """撤销时这张文件从哪还原。
+
+        三种来源：
+        - `__install__` 大文件：共享备份一份
+        - `__baseline__`：基线层（新版记录），按 卡+族 定位，与记录条数无关
+        - 其余：`backups/<记录id>/`（老版本留下的记录，继续认）
+        返回 None 表示基线记的是「原本不存在」，调用方应删掉这个文件。
+        """
         if rel.startswith("__install__/"):
             return runtime.data_dir() / "wallpaper" / "backup" / "data.unity3d"
-        return self.backups / rec.id / rec.modified[rel]
+        marker = rec.modified.get(rel)
+        if marker == BASELINE:
+            fam = family_for(rec.op)
+            if self.baselines.absent(rec.card, fam, rel):
+                return None
+            p = self.baselines.path_of(rec.card, fam, rel)
+            if p is not None:
+                return p
+            # 基线丢了（手动清过 data）：给一个不存在的路径，让调用方报
+            # "backup missing" 而不是误判成「原本不存在」把文件删掉
+            return self.baselines.expected_path(rec.card, fam, rel)
+        return self.backups / rec.id / marker

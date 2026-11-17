@@ -42,7 +42,8 @@ FILTERS = [(None, tr("all")), ("cutin", tr("has cut-in")), ("runfx", tr("has eff
            ("none", tr("has neither"))]
 # ctx="badge": 和 CLI 的 _badge 共用一套译文, 免得两处翻出两个词
 BADGE = {"game": (tr("yes", ctx="badge"), "class:b.game"), "yours": (tr("yours"), "class:b.yours"),
-         "wiped": (tr("WIPED"), "class:b.wiped")}
+         "wiped": (tr("WIPED"), "class:b.wiped"),
+         "borrowed": (tr("borrowed"), "class:b.game")}
 
 
 def _has(mod):
@@ -451,14 +452,13 @@ class Tui:
             if ci.sibling_cutin:
                 out.append(Act(f"  （{tr('another printing already has one')}：{', '.join(map(str, ci.sibling_cutin))}）"))
             out.append(Act(tr("Add cut-in: Disaster Leo (default)"), lambda: self.a_cutin(DEFAULT_DONOR)))
-            out.append(Act(tr("Add cut-in: pick another card's…"), lambda: self.a_cutin_pick(False)))
-            out.append(Act(tr("Add cut-in: editable copy (for reskin)…"), lambda: self.a_cutin_pick(True)))
+            out.append(Act(tr("Add cut-in: pick another card's…"), self.a_cutin_pick))
             out.append(Act(tr("Cut-in from a video / GIF…") if vid else
                            tr("Cut-in from a video  [pip install .[video]]"),
                            self.a_cutin_video if vid else self.a_need_video))
         elif ci.cutin == "game":
             out.append(Act("  " + tr("has a cut-in already")))
-            out.append(Act(tr("Replace its cut-in with another card's…"), lambda: self.a_cutin_pick(False, force=True)))
+            out.append(Act(tr("Replace its cut-in with another card's…"), lambda: self.a_cutin_pick(force=True)))
         else:
             from mdstudio.ops import cutin as C
             cloned = self.ctx and C.is_cloned(self.ctx, ci.id)
@@ -511,21 +511,21 @@ class Tui:
     def _name(self, cid):
         return (self.db.name(cid) if self.db else "") or str(cid)
 
-    def a_cutin(self, donor, clone=False, force=False):
+    def a_cutin(self, donor, force=False):
         from mdstudio.ops import cutin as C
         ci = self.sel
-        fn = C.clone if clone else C.borrow
+        fn = C.clone
         self.run_op(tr("cut-in for %s %s from %s %s") % (ci.id, self._name(ci.id), donor, self._name(donor)),
                     lambda ctx: (fn(ctx, ci.id, donor, force=force), self._verify(ctx, ci.id)))
 
-    def a_cutin_pick(self, clone, force=False):
+    def a_cutin_pick(self, force=False):
         inv = self.inv
         donors = sorted((c for c, st in inv.cutin.items() if st == "game"), key=lambda c: self._name(c).lower())
         donors.sort(key=lambda c: c != DEFAULT_DONOR)
         rows = [(c, f"{c:>6}  {self._name(c)}") for c in donors]
 
         def go(donor):
-            self.a_cutin(donor, clone=clone, force=force)
+            self.a_cutin(donor, force=force)
         self._choose(tr("Copy the cut-in of which card?"), rows, go,
                      hint=tr("%s cards have one. Type to filter.") % len(rows), searchable=True)
 
@@ -758,7 +758,8 @@ class Tui:
     def a_pack_install(self):
         from mdstudio.ops import pack as P
         self._ask_path(tr("Pack (.zip or folder)"), lambda p: self.run_op(
-            f"{tr('install')} {p.name}", P.install, p, done=lambda r: self.say(f"{tr('installed')}：{r or tr('nothing new')}")))
+            f"{tr('install')} {p.name}", P.install, p,
+            done=lambda r: self.say(f"{tr('installed')}：{r[0] or tr('nothing new')}")))
 
     def a_pack_inspect(self):
         from mdstudio.ops import pack as P
@@ -1073,7 +1074,8 @@ class _Scroll:
 
 
 def _txt(st):
-    return {"game": tr("yes", ctx="badge"), "yours": tr("yours"), "wiped": tr("WIPED")}.get(st, "-")
+    return {"game": tr("yes", ctx="badge"), "yours": tr("yours"), "wiped": tr("WIPED"),
+            "borrowed": tr("borrowed")}.get(st, "-")
 
 
 def _when(t):

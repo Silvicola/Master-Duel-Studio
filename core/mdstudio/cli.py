@@ -76,7 +76,8 @@ def _inv(ctx, a):
 def _badge(st):
     # game = 在游戏的表里, 可能是官方, 也可能是别的工具/mod 加的, 区分不了. 只有本工具加的能确定
     # ctx="badge": 这个 yes 是状态标 (已有), 不是布尔列的是
-    return {"game": tr("yes", ctx="badge"), "yours": tr("yours"), "wiped": tr("WIPED")}.get(st, "-")
+    return {"game": tr("yes", ctx="badge"), "yours": tr("yours"), "wiped": tr("WIPED"),
+            "borrowed": tr("borrowed")}.get(st, "-")
 
 
 def _ask(prompt):
@@ -155,7 +156,8 @@ def cmd_cutin_add(ctx, a):
     from mdstudio.ops import cutin as C
     card = _card(ctx, a, a.card)
     donor = _card(ctx, a, a.donor or DEFAULT_CUTIN_DONOR, "donor", want="cutin")
-    (C.clone if a.clone else C.borrow)(ctx, card, donor, force=a.force)
+    # 借用（共享依赖）那套已下线：只保留独立克隆，后面要改要埋素材都得是独立副本
+    C.clone(ctx, card, donor, force=a.force)
     _verify_cutin(ctx, card)
 
 
@@ -190,7 +192,7 @@ def cmd_cutin_video(ctx, a):
                      donor=donor, preview_dir=a.preview,
                      pop_curve=cutin_flip.parse_pop_curve(a.pop_curve) if a.pop_curve else None,
                      offset_x=a.offset_x, offset_y=a.offset_y, zoom=a.zoom, rotate=a.rotate,
-                     sharp_model=a.sharp_model)
+                     sharp_model=a.sharp_model, compat_sd=a.compat_sd)
 
 
 def cmd_spine(ctx, a):
@@ -201,7 +203,8 @@ def cmd_spine(ctx, a):
     if M._single(src):
         if len(a.cards) != 1:
             raise MDStudioError(tr("one Spine cut-in: name the one card it goes on"))
-        M.port_card(ctx, _card(ctx, a, a.cards[0]), src, force=a.force, anim=a.anim, scale=a.scale)
+        M.port_card(ctx, _card(ctx, a, a.cards[0]), src, force=a.force, anim=a.anim, scale=a.scale,
+                    compat_sd=a.compat_sd)
         print(tr("Done. Start the game and summon it in Solo."))
         return
     rows = M.scan(src)
@@ -224,7 +227,8 @@ def cmd_spine(ctx, a):
         return
     if a.cards:
         for c in a.cards:
-            M.port_card(ctx, _card(ctx, a, c), src, force=a.force, anim=a.anim, scale=a.scale)
+            M.port_card(ctx, _card(ctx, a, c), src, force=a.force, anim=a.anim, scale=a.scale,
+                        compat_sd=a.compat_sd)
         print(tr("Done. Start the game and summon it in Solo."))
         return
     live = _cutin_mrks(ctx)
@@ -341,16 +345,26 @@ def cmd_pack_export(ctx, a):
 
 def cmd_pack_install(ctx, a):
     from mdstudio.ops import pack as P
-    for kind, mrk in P.install(ctx, _file(a, a.pack, "pack")):
+    for kind, mrk in P.install(ctx, _file(a, a.pack, "pack"))[0]:
         print(tr("installed %s %s") % (kind, mrk))
+
+
+def pack_inspect_rows(meta):
+    """把包的分组结构摊成 (类型, 卡号, 清单条目数) 列表。
+
+    包里是一张卡下面挂 art/cutin/runfx 三个小项，直接遍历 meta["cards"]
+    会读到没有 kind 键的卡级字典，所以必须先展开。
+    """
+    from mdstudio.ops import pack as P
+    return [(c["kind"], c["mrk"], len(c.get("catalog") or {}))
+            for c in P._ungroup_cards(meta)]
 
 
 def cmd_pack_inspect(ctx, a):
     from mdstudio.ops import pack as P
     m = P.inspect(_file(a, a.pack, "pack"))
     print(tr("%s  (%s)") % (m['name'], m['tool']))
-    _table([(c["kind"], c["mrk"], len(c["catalog"])) for c in m["cards"]],
-           (tr("kind"), tr("card"), tr("manifest entries")))
+    _table(pack_inspect_rows(m), (tr("kind"), tr("card"), tr("manifest entries")))
 
 
 def _sib_note(ci):
@@ -501,7 +515,6 @@ def build_parser():
     x = sub.add_parser("add", help=tr("cut-in: mdstudio add <card> [donor, default Disaster Leo]"))
     _card_arg(x, required=False)
     _card_arg(x, "donor", required=False, help=tr("card whose cut-in to copy (default 11016 Disaster Leo)"))
-    x.add_argument("--clone", action="store_true", help=tr("independent copy (needed for reskin)"))
     x.add_argument("--force", action="store_true", help=tr("replace a cut-in the card already has"))
     x.set_defaults(fn=cmd_cutin_add)
     x = sub.add_parser("fx", help=tr("activation effect: mdstudio fx <card> <donor> (best on one-effect cards)"),
@@ -607,6 +620,10 @@ def build_parser():
                            "tool's own); with a card named, rebuild this tool's import of it even if it passes"))
     x.add_argument("--anim", help=tr("animation to play (default: 'animation', else the first one)"))
     x.add_argument("--scale", type=float, default=1.0, help=tr("size multiplier (default 1.0 = auto-fit)"))
+    x.add_argument("--compat-sd", dest="compat_sd", action="store_true", default=None,
+                   help=tr("also rewrite the SD textures (low-quality setting). Default: follow the setting page"))
+    x.add_argument("--no-compat-sd", dest="compat_sd", action="store_false",
+                   help=tr("leave the SD textures as the chassis has them"))
     x.set_defaults(fn=cmd_spine)
 
     # sound
@@ -656,7 +673,7 @@ def _add_cutin_video_args(x):
     x.add_argument("--cell", type=int, default=1080, help=tr("px per frame (height for full)"))
     x.add_argument("--duration", type=float, default=4.8, help=tr("seconds (the cut-in Timeline is stretched to fit)"))
     x.add_argument("--size", type=int, help=tr("skeleton width: full default 4800 = fills a 16:9 screen; "
-                                               "others 2750 (game ~2456)"))
+                                               "others 2930 (peak ~110% of the screen height at 1440p)"))
     x.add_argument("--mode", choices=("auto", "full", "square", "matte"), default="auto",
                    help=tr("auto (default) = keep frames that already have transparency, remove a "
                            "detected backdrop, otherwise use the whole frame; full/square/matte force "
@@ -679,6 +696,10 @@ def _add_cutin_video_args(x):
                    choices=("realesr-animevideov3", "realesrgan-x4plus-anime"),
                    help=tr("Real-ESRGAN model: videov3 (fast, video) or x4plus-anime (slow, line art)"))
     x.add_argument("--donor", help=tr("cut-in to clone as the base (default 11016)"))
+    x.add_argument("--compat-sd", dest="compat_sd", action="store_true", default=None,
+                   help=tr("also rewrite the SD textures (low-quality setting). Default: follow the setting page"))
+    x.add_argument("--no-compat-sd", dest="compat_sd", action="store_false",
+                   help=tr("leave the SD textures as the chassis has them"))
     x.add_argument("--preview", help=tr("folder to save sheet + dark preview"))
     x.set_defaults(fn=cmd_cutin_video)
 

@@ -1,4 +1,7 @@
-﻿using System.Collections.ObjectModel;
+﻿using System;
+using System.Collections.ObjectModel;
+using System.IO;
+using System.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
@@ -45,18 +48,48 @@ public partial class App : Application
     /// <summary>预演开关变化时触发（徽标点击、设置页开关切换都会走这里）。</summary>
     public static event Action? DryRunChanged;
 
+    /// <summary>主任务槽是否有动作在跑（写游戏文件的那种）。组件下载不算。</summary>
+    public static bool MainBusy { get; private set; }
+
+    /// <summary>主任务槽进出时触发。注意：来自引擎读线程，改界面要自己转回 UI 线程。</summary>
+    public static event Action? MainBusyChanged;
+
     /// <summary>引擎启动失败的原因（例如找不到 Python）。</summary>
     public static string? EngineError { get; private set; }
 
-    /// <summary>全局运行日志。各页面往里写，只在「历史」页展示。</summary>
+    /// <summary>全局运行日志。只在历史页「复制日志」时读取，界面不再展示正文。</summary>
     public static readonly ObservableCollection<string> Log = new();
     private const int LogCap = 400;
+    private static readonly object LogLock = new();
 
-    /// <summary>追加一条运行日志（自带上限与告警前缀），供各页面的 engine.LogReceived 调用。</summary>
+    /// <summary>本次运行的日志文件（按天一个，实时追加，重启不清）。</summary>
+    public static string LogFilePath { get; private set; } = "";
+
+    /// <summary>取一份日志快照，供复制到剪贴板。</summary>
+    public static string LogSnapshot()
+    {
+        lock (LogLock) return string.Join("\r\n", Log);
+    }
+
+    /// <summary>追加一条运行日志，同时落盘。引擎日志由本类单点订阅，页面不再各自登记。</summary>
     public static void AddLog(string level, string text)
     {
-        Log.Add(level is "WARNING" or "ERROR" ? $"[{level}] {text}" : text);
-        while (Log.Count > LogCap) Log.RemoveAt(0);
+        var line = level is "WARNING" or "ERROR" ? $"[{level}] {text}" : text;
+        lock (LogLock)
+        {
+            Log.Add(line);
+            while (Log.Count > LogCap) Log.RemoveAt(0);
+            try
+            {
+                var dir = Path.Combine(AppContext.BaseDirectory, "data", "logs");
+                Directory.CreateDirectory(dir);
+                LogFilePath = Path.Combine(dir, $"运行日志_{DateTime.Now:yyyyMMdd}.txt");
+                File.AppendAllText(LogFilePath,
+                    $"{DateTime.Now:HH:mm:ss} {line}{Environment.NewLine}", Encoding.UTF8);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     /// <summary>
@@ -75,15 +108,17 @@ public partial class App : Application
         };
     }
 
-    /// <summary>把异常写到 %LOCALAPPDATA%\MDStudio\crash.log，方便排查。</summary>
+    /// <summary>
+    /// 把异常写到程序目录下的 crash.log，方便排查。
+    ///
+    /// 放在程序目录而不是 %LOCALAPPDATA%：整个工具的原则是配置、数据、日志都跟着
+    /// exe 走，用户把文件夹搬到别处能一起带走，也不往系统目录里留东西。
+    /// </summary>
     private static void CrashLog(Exception? ex)
     {
         try
         {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "MDStudio");
-            Directory.CreateDirectory(dir);
+            var dir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
             File.AppendAllText(Path.Combine(dir, "crash.log"),
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex}\r\n\r\n");
         }
@@ -102,6 +137,18 @@ public partial class App : Application
         try
         {
             Engine = EngineClient.Start(EnginePaths.Python, EnginePaths.EngineDir, EnginePaths.Core);
+            // 日志单点订阅：以前动画页/分享页/历史页各自订阅，同一条日志会被
+            // 重复追加两三行。收敛到这里，各页面退订，日志不重复也不丢。
+            if (Engine is { } engine)
+            {
+                engine.LogReceived += (level, text) => AddLog(level, text);
+                // 有动作在跑时锁住账号与游戏目录：引擎那边也会拒，这里提前把按钮灰掉
+                engine.MainBusyChanged += busy =>
+                {
+                    MainBusy = busy;
+                    MainBusyChanged?.Invoke();
+                };
+            }
         }
         catch (Exception ex)
         {
@@ -112,6 +159,18 @@ public partial class App : Application
                 : ex.Message;
         }
 
+        _ = StartAsync();
+    }
+
+    /// <summary>
+    /// 直接开主窗口。
+    ///
+    /// 早先这里先过一道资源门禁（缺模型就不让进），但那些组件只影响个别功能
+    /// （AI 抠图、超分、Spine 版本转换），为它们把整个软件挡在门外不划算。
+    /// 现在改成：进得去，用到时才提示，去设置页按需下载。
+    /// </summary>
+    private Task StartAsync()
+    {
         try
         {
             _window = new MainWindow();
@@ -129,6 +188,7 @@ public partial class App : Application
             CrashLog(ex);
             throw;
         }
+        return Task.CompletedTask;
     }
 }
 

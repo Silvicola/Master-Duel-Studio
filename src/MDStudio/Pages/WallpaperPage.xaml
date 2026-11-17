@@ -7,25 +7,16 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <!--  标题  -->
-        <TextBlock
-            Grid.Row="0"
-            Margin="20,16,20,4"
-            Style="{StaticResource TitleTextBlockStyle}"
-            Text="壁纸" />
-
+    <!--
+        不设页标题：导航栏上已经写着「壁纸」，再顶一行 28px 大字只是把内容往下推。
+        顶部 55 是动画页那排切换标签占掉的高度（8 边距 + 标签行 + 12 行距），
+        固定成同一个数，切页时两块面板的顶边才不会上下跳。改这里要连卡图页、分享页一起改。
+    -->
+    <Grid Padding="24,55,24,24">
         <ScrollViewer
-            Grid.Row="1"
             HorizontalScrollBarVisibility="Disabled"
             VerticalScrollBarVisibility="Auto">
             <Grid
-                Padding="20,8,20,6"
                 VerticalAlignment="Top"
                 ColumnSpacing="10"
                 RowSpacing="0">

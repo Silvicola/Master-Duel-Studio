@@ -28,8 +28,27 @@ public sealed class EngineClient : IAsyncDisposable
     /// <summary>引擎日志。参数是 (级别, 文本)。</summary>
     public event Action<string, string>? LogReceived;
 
-    /// <summary>进度。参数是 (阶段文本, 第几个, 共几个)；i 为 -1 表示不知道多久。</summary>
-    public event Action<string, int, int>? ProgressChanged;
+    /// <summary>
+    /// 进度。参数是 (任务名, 阶段文本, 第几个, 共几个)；i 为 -1 表示不知道多久。
+    /// 任务名是发起这条进度的 op，比如 assets.ensure / cutin.video。
+    /// 主任务槽和轻任务槽是两个子进程，共用一个事件通道，所以订阅方必须自己按名字
+    /// 过滤，否则下载的百分比会打到别的页面，别的页面的阶段文字也会打到下载那一条。
+    /// </summary>
+    public event Action<string, string, int, int>? ProgressChanged;
+
+    /// <summary>
+    /// 卡数据索引的构建进度。单独一路，不和 ProgressChanged 混：动画页一直订阅着
+    /// 那一路，索引重建的进度串过去会让它的状态条闪出不相干的文字。
+    /// </summary>
+    public event Action<string, int, int>? IndexProgressChanged;
+
+    /// <summary>
+    /// 主任务槽是否有动作在跑。轻任务（组件下载）不算：它不写游戏文件。
+    /// 切账号、换游戏目录要等它空下来，否则正在跑的活按旧账号解析的路径会和新设置对不上。
+    /// </summary>
+    public event Action<bool>? MainBusyChanged;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _mainJobs = new();
 
     private EngineClient(Process proc)
     {
@@ -52,6 +71,10 @@ public sealed class EngineClient : IAsyncDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = new UTF8Encoding(false),
+            // PYTHONIOENCODING=utf-8 让引擎的 stdout 与 stderr 都是 UTF-8 字节。
+            // stderr 漏了这一行就会按系统默认编码（中文 Windows 是 GBK）解码，
+            // 写进日志文件变成「瀹氫綅娓告垙鏁版嵁」这类乱码（2026-11-12 用户实测）。
+            StandardErrorEncoding = new UTF8Encoding(false),
             StandardInputEncoding = new UTF8Encoding(false),
         };
         psi.ArgumentList.Add("-u");
@@ -119,20 +142,57 @@ public sealed class EngineClient : IAsyncDisposable
 
     private void DispatchEvent(string? kind, JsonElement root)
     {
-        switch (kind)
+        // 处理事件时抛异常绝不能带走读循环：读循环一断，所有等待中的调用就永远
+        // 等不到回应，界面上表现为"卡住、连取消都没反应"。
+        try
         {
-            case "log":
-                LogReceived?.Invoke(
-                    root.TryGetProperty("level", out var lv) ? lv.GetString() ?? "INFO" : "INFO",
-                    root.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "");
-                break;
-            case "progress":
-                ProgressChanged?.Invoke(
-                    root.TryGetProperty("text", out var pt) ? pt.GetString() ?? "" : "",
-                    root.TryGetProperty("i", out var pi) ? pi.GetInt32() : -1,
-                    root.TryGetProperty("n", out var pn) ? pn.GetInt32() : 0);
-                break;
+            switch (kind)
+            {
+                case "log":
+                    LogReceived?.Invoke(
+                        root.TryGetProperty("level", out var lv) ? lv.GetString() ?? "INFO" : "INFO",
+                        root.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "");
+                    break;
+                case "progress":
+                    ProgressChanged?.Invoke(
+                        root.TryGetProperty("job", out var pj) ? pj.GetString() ?? "" : "",
+                        root.TryGetProperty("text", out var pt) ? pt.GetString() ?? "" : "",
+                        root.TryGetProperty("i", out var pi) ? pi.GetInt32() : -1,
+                        root.TryGetProperty("n", out var pn) ? pn.GetInt32() : 0);
+                    break;
+                case "index":
+                    IndexProgressChanged?.Invoke(
+                        root.TryGetProperty("text", out var it) ? it.GetString() ?? "" : "",
+                        root.TryGetProperty("i", out var ii) ? ii.GetInt32() : -1,
+                        root.TryGetProperty("n", out var inn) ? inn.GetInt32() : 0);
+                    break;
+                case "job":
+                    OnJobEvent(root);
+                    break;
+            }
         }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[engine] 事件处理失败（{kind}）：{ex}");
+        }
+    }
+
+    /// <summary>跟踪主任务槽的进出，状态翻转时通知界面一次（不每次刷新都通知）。</summary>
+    private void OnJobEvent(JsonElement root)
+    {
+        var op = root.TryGetProperty("op", out var o) ? o.GetString() ?? "" : "";
+        // 组件下载走轻任务槽，只写 data/tools，不碰游戏文件，切换账号与它无关
+        if (op == "assets.ensure") return;
+
+        var id = root.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.Number
+            ? i.GetInt32().ToString()
+            : "";
+        var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "" : "";
+        bool was = !_mainJobs.IsEmpty;
+        if (state == "started") _mainJobs[id] = 1;
+        else _mainJobs.TryRemove(id, out _);
+        bool now = !_mainJobs.IsEmpty;
+        if (was != now) MainBusyChanged?.Invoke(now);
     }
 
     /// <summary>发一条命令并等应答。引擎报错时抛 EngineException。</summary>

@@ -30,7 +30,7 @@
                         Style="{StaticResource CaptionTextBlockStyle}"
                         Text="{x:Bind SubText}" />
                 </StackPanel>
-                <!--  右侧三个状态标签：占位卡固定用警示色，两种超框按类别取色  -->
+                <!--  右侧状态标签：未上线 / 卡型未确认 / 超框状态（四态互斥，带★表示覆盖了官方那套）  -->
                 <StackPanel
                     Grid.Column="1"
                     Orientation="Horizontal"
@@ -38,30 +38,28 @@
                     VerticalAlignment="Center">
                     <TextBlock
                         FontSize="11"
-                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                        Text="占位卡"
-                        Visibility="{x:Bind PlaceholderTagVisibility}" />
-                    <TextBlock
-                        FontSize="11"
                         Foreground="{ThemeResource SystemFillColorAttentionBrush}"
                         Text="未上线"
+                        ToolTipService.ToolTip="{x:Bind LockTip}"
                         Visibility="{x:Bind UnreleasedVisibility}" />
                     <TextBlock
                         FontSize="11"
-                        Foreground="{x:Bind KindOfficialArt, Converter={StaticResource StatusBrush}}"
-                        Text="官方超框"
-                        Visibility="{x:Bind OfficialArtVisibility}" />
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        Text="卡型未确认"
+                        ToolTipService.ToolTip="{x:Bind LockTip}"
+                        Visibility="{x:Bind UnknownSubtypeVisibility}" />
                     <TextBlock
                         FontSize="11"
-                        Foreground="{x:Bind KindOurArt, Converter={StaticResource StatusBrush}}"
-                        Text="自改超框"
-                        Visibility="{x:Bind OurArtVisibility}" />
+                        Foreground="{x:Bind KindArt, Converter={StaticResource StatusBrush}}"
+                        Text="{x:Bind ArtTag}"
+                        ToolTipService.ToolTip="{x:Bind ArtTagTip}"
+                        Visibility="{x:Bind ArtTagVisibility}" />
                 </StackPanel>
             </Grid>
         </DataTemplate>
     </Page.Resources>
 
-    <Grid Padding="24,8,24,24" ColumnSpacing="12" RowSpacing="12">
+    <Grid Padding="24,55,24,24" ColumnSpacing="12" RowSpacing="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -78,6 +76,7 @@
             <Grid RowSpacing="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
@@ -88,9 +87,27 @@
                     TextChanged="SearchBox_TextChanged"
                     />
 
+                <!--
+                    筛选档位，四档互斥且完备，每张可见卡必然落在其中一档：
+                    官方超框 = 游戏本来就有，自改超框 = 工具写入的（官方原本有没有都算这档，
+                    来历看行标签的悬停），无超框 = 本来就没有也没改过，未上线 = 游戏还没放出来。
+                    不设「全部」：再给个全部只多一次点击。默认停在「官方超框」。
+                    未上线单独一档，三个超框档里不再出现未上线的卡。
+                -->
+                <ComboBox
+                    x:Name="ArtFilterBox"
+                    Grid.Row="1"
+                    HorizontalAlignment="Stretch"
+                    SelectionChanged="ArtFilterBox_SelectionChanged">
+                    <ComboBoxItem Content="官方超框" Tag="official" />
+                    <ComboBoxItem Content="自改超框" Tag="self" />
+                    <ComboBoxItem Content="无超框" Tag="none" />
+                    <ComboBoxItem Content="未上线" Tag="unreleased" />
+                </ComboBox>
+
                 <TextBlock
                     x:Name="EmptyHint"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -101,7 +118,7 @@
                 <!--  右侧留 16 给浮层式滚动条，否则选中框右边会被压住  -->
                 <ListView
                     x:Name="CardList"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     Padding="0,0,16,0"
                                                                                 SelectionChanged="CardList_SelectionChanged"
                     ItemTemplate="{StaticResource CardRow}"
@@ -234,7 +251,7 @@
 
                 <TextBlock
                     x:Name="CountText"
-                    Grid.Row="2"
+                    Grid.Row="3"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Style="{StaticResource CaptionTextBlockStyle}"
                     TextTrimming="CharacterEllipsis" />
@@ -255,27 +272,84 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!--  第一行：卡片信息（卡名 + 卡号）  -->
-                <!--  卡名 + 卡号一行：卡号用小字贴在名字右侧  -->
-                <StackPanel
-                    Grid.Row="0"
-                    Margin="0,0,0,4"
-                    Orientation="Horizontal"
-                    Spacing="10">
-                    <TextBlock
-                        x:Name="CardName"
-                        IsTextSelectionEnabled="True"
-                        Style="{StaticResource TitleTextBlockStyle}"
-                        Text="选一张卡"
-                        TextTrimming="CharacterEllipsis" />
-                    <TextBlock
-                        x:Name="CardMeta"
-                        VerticalAlignment="Bottom"
-                        FontSize="13"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Style="{StaticResource BodyTextBlockStyle}"
-                        Text="" />
-                </StackPanel>
+                <!--  第一行：卡片信息（卡名 + 卡号）+ 刷新 / 复原  -->
+                <Grid Grid.Row="0" Margin="0,0,0,4" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal"
+                        Spacing="10">
+                        <!--
+                            用只读 TextBox 而不是 TextBlock：WinUI 3 里 TextBlock 的
+                            IsTextSelectionEnabled 设了也拖选不动（实测没有选中态），
+                            而只读 TextBox 天然支持拖选和 Ctrl+C。去掉边框和底色后
+                            看起来就是一行文字。
+                        -->
+                        <TextBox
+                            x:Name="CardName"
+                            MaxWidth="440"
+                            Padding="0"
+                            VerticalAlignment="Center"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            FontSize="28"
+                            FontWeight="SemiBold"
+                            IsReadOnly="True"
+                            IsSpellCheckEnabled="False"
+                            Text="选一张卡"
+                            TextWrapping="NoWrap">
+                            <!--  只读也要装作不是输入框：悬停和聚焦时都不变色  -->
+                            <TextBox.Resources>
+                                <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                            </TextBox.Resources>
+                        </TextBox>
+                        <TextBox
+                            x:Name="CardMeta"
+                            MinHeight="0"
+                            Padding="0"
+                            VerticalAlignment="Bottom"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            FontSize="13"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            IsReadOnly="True"
+                            IsSpellCheckEnabled="False"
+                            Text=""
+                            TextWrapping="NoWrap">
+                            <TextBox.Resources>
+                                <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                            </TextBox.Resources>
+                        </TextBox>
+                    </StackPanel>
+                    <StackPanel
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal"
+                        Spacing="8">
+                        <Button
+                            x:Name="RefreshButton"
+                            Height="32"
+                            MinWidth="96"
+                            Click="RefreshButton_Click"
+                            Content="刷新" />
+                        <Button
+                            x:Name="RestoreButton"
+                            Height="32"
+                            MinWidth="96"
+                            Click="RevertBtn_Click"
+                            Content="复原"
+                            IsEnabled="False" />
+                    </StackPanel>
+                </Grid>
 
 
                 <!--  超框工作台：预览 + 参数，限一个最大宽度，窄窗口下按比例收缩  -->
@@ -302,8 +376,26 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <Grid>
-                        <Viewbox Stretch="Uniform" VerticalAlignment="Top">
+                    <!--
+                        卡位固定 704:1024 的比例（288 × 419）。没选卡时显示虚线空位，
+                        选了卡就换成真卡图，两者占同一块地方，切换时页面不跳。
+                    -->
+                    <Grid
+                        x:Name="PreviewSlot"
+                        Height="419"
+                        VerticalAlignment="Top">
+                        <Rectangle
+                            x:Name="EmptySlot"
+                            Stroke="{ThemeResource TextFillColorTertiaryBrush}"
+                            StrokeDashArray="3 3"
+                            StrokeThickness="1"
+                            RadiusX="12"
+                            RadiusY="12" />
+                        <Viewbox
+                            x:Name="CardView"
+                            Stretch="Uniform"
+                            VerticalAlignment="Top"
+                            Visibility="Collapsed">
                             <!--  细线贴着卡片走：线框包着画布，跟着 704:1024 一起缩放，
                                   不再随面板高度拉伸。厚度按设计像素给（300 宽下约 1.3px）  -->
                             <!--  圆角取卡图实测的 26（卡图坐标），细线厚度 3，所以外角给 29，
@@ -400,7 +492,7 @@
                             VerticalAlignment="Center"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Style="{StaticResource CaptionTextBlockStyle}"
-                            Text="选一张卡"
+                            Text="从左边选一张卡"
                             TextAlignment="Center"
                             TextWrapping="Wrap" />
                     </Grid>
@@ -416,8 +508,9 @@
 
                 <!--  参数：一个两列网格，第 0 列放控件、第 1 列放按钮与读数，
                       四行的左右边缘因此完全对齐  -->
+                <Grid Grid.Column="1">
                 <ScrollViewer
-                    Grid.Column="1"
+                    x:Name="EditPane"
                     HorizontalScrollBarVisibility="Disabled"
                     VerticalScrollBarVisibility="Auto">
                     <!--  参数自成一块：浅底圆角、宽高都跟着可用空间走-->
@@ -433,7 +526,7 @@
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="88" />
+                                <ColumnDefinition Width="96" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -502,10 +595,20 @@
                             <controls:WheelSafeComboBox
                                 x:Name="EffectBox"
                                 Grid.Row="6"
-                                Grid.ColumnSpan="2"
                                 HorizontalAlignment="Stretch"
-                                SelectionChanged="EffectBox_SelectionChanged"
-                                />
+                                SelectionChanged="EffectBox_SelectionChanged" />
+                            <!--  写入就近放在它要用的参数旁边，不再吊在整页最底下  -->
+                            <Button
+                                x:Name="ApplyBtn"
+                                Grid.Row="6"
+                                Grid.Column="1"
+                                MinWidth="96"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Bottom"
+                                Click="ApplyBtn_Click"
+                                Content="生成超框"
+                                IsEnabled="False"
+                                Style="{StaticResource AccentButtonStyle}" />
 
                             <!--  主体大小  -->
                             <TextBlock
@@ -564,28 +667,39 @@
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 Style="{StaticResource CaptionTextBlockStyle}"
                                 Text="100%" />
-
-                            <StackPanel
-                                Grid.Row="11"
-                                Grid.ColumnSpan="2"
-                                Margin="0,16,0,0"
-                                Orientation="Horizontal"
-                                Spacing="8">
-                                <Button
-                                    x:Name="ApplyBtn"
-                                                          Click="ApplyBtn_Click"
-                                    Content="写入游戏"
-                                    IsEnabled="False"
-                                    Style="{StaticResource AccentButtonStyle}" />
-                                <Button
-                                    x:Name="RevertBtn"
-                                                           Click="RevertBtn_Click"
-                                    Content="撤回这张卡的超框"
-                                    IsEnabled="False" />
-                            </StackPanel>
                         </Grid>
                     </Border>
                 </ScrollViewer>
+
+                <!--
+                    只看态：控件整块收起后，这里说明为什么改不了，别让右栏一片空白。
+                    外形沿用参数面板的浅底圆角块，切过来时位置和大小都对得上。
+                -->
+                <Border
+                    x:Name="ReadOnlyNote"
+                    MaxWidth="546"
+                    Padding="16"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Top"
+                    Background="{ThemeResource LayerFillColorAltBrush}"
+                    BorderBrush="{ThemeResource WellBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Visibility="Collapsed">
+                    <StackPanel Spacing="6">
+                        <TextBlock
+                            x:Name="ReadOnlyTitle"
+                            Style="{StaticResource BodyStrongTextBlockStyle}"
+                            Text="这张卡不能改" />
+                        <TextBlock
+                            x:Name="ReadOnlyText"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text=""
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                </Grid>
                 </Grid>
                 </Grid>
 
@@ -595,17 +709,37 @@
         <!--  忙碌遮罩：写入 / 撤回期间挡住整页操作，左侧导航在窗口壳里，不受影响  -->
         <Grid
             x:Name="BusyOverlay"
-            Grid.Row="0"
+            Grid.RowSpan="2"
             Grid.ColumnSpan="2"
+            Margin="-24,-55,-24,-24"
             Background="Transparent"
             Visibility="Collapsed">
-            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Opacity="0.7" />
-            <ProgressRing
-                Width="36"
-                Height="36"
+            <!--
+                负 Margin 逐边抵消根 Grid 的 Padding="24,55,24,24"，让遮罩铺满 NavFrame
+                的整个内容区（标题栏与左侧导航在窗口壳里，本来就不归它管）。
+                顶部的 55 是上一轮为了把面板顶边对齐动画页的切换标签加出来的，
+                当时只改了根 Grid 的 Padding，这里仍留着旧值 -8，于是遮罩上边内缩 47px，
+                标题栏下方漏出一条没被盖住的亮带。改根 Grid 的 Padding 时必须同步改这里。
+                蒙层用 Smoke，原来用的是卡片底色 + 0.7 不透明度，那是浅色主题下最接近页面
+                自身的颜色，叠上去几乎看不出变化，容易被当成「遮罩没出来」。
+            -->
+            <Border
+                Background="{ThemeResource SmokeFillColorDefaultBrush}"
+                CornerRadius="8,0,0,0" />
+            <StackPanel
                 HorizontalAlignment="Center"
-                IsActive="True"
-                VerticalAlignment="Center" />
+                VerticalAlignment="Center"
+                Spacing="14">
+                <ProgressRing
+                    Width="36"
+                    Height="36"
+                    HorizontalAlignment="Center"
+                    IsActive="True" />
+                <Button
+                    Click="OverlayCancel_Click"
+                    Content="取消"
+                    Style="{StaticResource OverlayCancelButton}" />
+            </StackPanel>
         </Grid>
 
         <!--  底部状态  -->

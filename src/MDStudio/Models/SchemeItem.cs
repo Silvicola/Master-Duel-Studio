@@ -4,10 +4,12 @@ namespace MDStudio.Models;
 public sealed class SchemeItem
 {
     public string Name { get; set; } = "";
+    /// <summary>内置方案（2K / 4K）：不给删、不给覆盖，也不写进 schemes.json</summary>
+    public bool Builtin { get; set; }
     public int Frames { get; set; } = 72;
-    public int Cell { get; set; } = 1820;
+    public int Cell { get; set; } = 1664;
     public double Dur { get; set; } = 1.6;
-    public int Size { get; set; } = 2560;
+    public int Size { get; set; } = 2930;
     public int OffX { get; set; }
     public int OffY { get; set; }
     public int Rot { get; set; }

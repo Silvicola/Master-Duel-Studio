@@ -6,6 +6,7 @@
 """
 import copy
 import logging
+import math
 
 import UnityPy
 
@@ -80,7 +81,11 @@ def frame_curve(n, cols, rows):
             "minCurve": copy.deepcopy(c)}
 
 
-def build_bundle(chassis: bytes, sheet, cols, rows, n, duration, eid, max_size, aspect=1.0, size=400.0) -> bytes:
+def build_bundle(chassis: bytes, sheet, cols, rows, n, duration, eid, max_size, aspect=1.0, size=400.0,
+                 offset_x=0.0, offset_y=0.0, rotation=0.0) -> bytes:
+    """offset_x/y 是世界单位（界面按屏高百分比换算后传入），rotation 是角度。
+    三者在生成时一次写进 bundle，跟 max_size 一样只在这一次生效；改了要重新生成。
+    """
     lp = effect_path(eid)
     h = get_crc(lp)
     env = UnityPy.load(chassis)
@@ -150,6 +155,11 @@ def build_bundle(chassis: bytes, sheet, cols, rows, n, duration, eid, max_size, 
         if "startSizeZ" in im:
             im["startSizeZ"] = _const(im["startSizeZ"], size)
     im["startSpeed"] = _const(im["startSpeed"], 0.0)
+    # 平面内旋转。单位弧度，正数逆时针，跟召唤动画 rot 的约定一致。
+    # RotationModule 已关掉，startRotation 仍生效（它是初值，不是随时间旋转）。
+    # 只在真的转了的时候才动这个字段：默认 0 就别碰，产出的字节跟改动前一模一样。
+    if rotation and "startRotation" in im:
+        im["startRotation"] = _const(im["startRotation"], math.radians(float(rotation)))
     if "gravityModifier" in im:
         im["gravityModifier"] = _const(im["gravityModifier"], 0.0)
     im["maxNumParticles"] = 1
@@ -170,6 +180,25 @@ def build_bundle(chassis: bytes, sheet, cols, rows, n, duration, eid, max_size, 
     if isinstance(uv.get("startFrame"), dict):
         uv["startFrame"] = _const(uv["startFrame"], 0.0)   # 有的底盘随机起始帧
     uv["frameOverTime"] = frame_curve(n, cols, rows)
+
+    # 画面偏移走 Shape 模块的发射位置，不走 Transform。
+    # 2026-11-15 实测：写在 Transform.m_LocalPosition 上完全不动（0 和 10 两个值，
+    # 截图逐像素比对位移 0），写成 (0,10,0) 时画面仍在正中。而 Shape 的发射位置
+    # 是粒子自己的数据，不受运行时对 Transform 的摆布。
+    # 关掉形状的随机半径，只留一个确定的偏移点，不然粒子每次会撒在锥体里。
+    sh = tt.get("ShapeModule")
+    if isinstance(sh, dict):
+        sh["enabled"] = True
+        sh["type"] = 0                                   # Sphere
+        sh["angle"] = 0.0
+        sh["length"] = 0.0
+        sh["randomDirectionAmount"] = 0.0
+        sh["alignToDirection"] = False
+        if isinstance(sh.get("radius"), dict):
+            sh["radius"]["value"] = 0.0
+        sh["m_Position"] = {"x": float(offset_x), "y": float(offset_y), "z": 0.0}
+        sh["m_Scale"] = {"x": 1.0, "y": 1.0, "z": 1.0}
+        sh["m_Rotation"] = {"x": 0.0, "y": 0.0, "z": 0.0}
     ps.save_typetree(tt)
 
     rt = rend.read_typetree()
@@ -190,6 +219,8 @@ def build_bundle(chassis: bytes, sheet, cols, rows, n, duration, eid, max_size, 
     while cur is not None and cur.path_id not in seen:
         seen.add(cur.path_id)
         t = cur.read_typetree()
+        # 位置一律归零：偏移改由 Shape 模块的发射位置承担（见上），
+        # 这里只负责把底盘里那些偏到角落去的初始位置拉回原点。
         t["m_LocalPosition"] = {"x": 0.0, "y": 0.0, "z": 0.0}
         t["m_LocalScale"] = {"x": 1.0, "y": 1.0, "z": 1.0}
         cur.save_typetree(t)
@@ -236,7 +267,9 @@ DEFAULT_CARRIER = "SE_EV_EF09279_v1"
 
 
 def apply(ctx, card: int, source, n=120, cell=1080, duration=5.0, mode="full", max_size=None,
-          se_label="", sharp=False, eid=None, preview_dir=None, video_audio=False):
+          se_label="", sharp=False, eid=None, preview_dir=None, video_audio=False,
+          offset_x=0.0, offset_y=0.0, rotation=0.0,
+          sharp_model="realesr-animevideov3", sharp_scale=4):
     """video_audio=True: 把视频自带的声音塞进 se_label (借来的盘上 label, 用它的卡也跟着变)"""
     if video_audio:
         if not se_label:
@@ -246,7 +279,8 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=5.0, mode="full", m
         audio.ffmpeg_exe()
         if not audio.has_audio(source):           # 先查, 别等几分钟图集做完才说没声音
             raise MDStudioError(tr("%s has no audio track. Untick 'use the video's own audio'.") % source)
-    rec = _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp, eid, preview_dir)
+    rec = _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp, eid, preview_dir,
+                 offset_x, offset_y, rotation, sharp_model, sharp_scale)
     if video_audio:
         _video_sound(ctx, card, source, duration, se_label)
     return rec
@@ -270,11 +304,22 @@ def _video_sound(ctx, card, source, duration, label):
         S.inject(ctx, label, wav, card=card)
 
 
-def _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp, eid, preview_dir):
+def _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp, eid, preview_dir,
+           offset_x=0.0, offset_y=0.0, rotation=0.0,
+           sharp_model="realesr-animevideov3", sharp_scale=4):
     """mode=full 全屏视频 (不抠图), matte = 只要角色
 
     上限: 单边 16384px. 1920x1080 一帧最多 8x15 = 120 帧 (16200 高), 5.5 秒约 22fps. 要更顺只能降分辨率.
     """
+    # 已经有本工具做过的改动（生成过视频，或借用过别卡的特效）时一律拦下，先复原再生成。
+    # 放在最前面：不查依赖、不建 Tx、不解帧，什么都没动就退回去。
+    #
+    # 2026-11-13 曾反过来（允许直接再生成一版，新 Ef 落地后 retire_old 回收旧的），
+    # 2026-11-15 用户改回「只能先复原再生成」：同一张卡上两条记录并存时，复原要按时间
+    # 倒序撤两族记录，顺序错一次就会留下读不到的登记或者孤儿 bundle。调参时最常做的
+    # 动作，不该是最容易出事的动作。界面一直有这道拦截，这里是让引擎同口径（CLI/TUI 也拦）。
+    if ctx.journal.for_card(card, R.OPS):
+        raise MDStudioError(tr("%s already has an effect from this tool. Restore it first.") % card)
     if preview_dir:
         from pathlib import Path
         Path(preview_dir).mkdir(parents=True, exist_ok=True)   # 先建好, 别等帧做完才发现路径不对
@@ -285,10 +330,10 @@ def _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp
         raise AssetMissing(tr("chassis %s not downloaded yet (see Mirror Force once in game)") % CHASSIS)
     if se_label and not S.on_disk(tx.game, se_label):
         raise AssetMissing(S.why_missing(se_label))
-    if any(r.op in R.OPS for r in ctx.journal.for_card(card)):
-        raise MDStudioError(tr("%s already has an effect from this tool. Remove it first.") % card)
+    old = []
 
-    frames = make_frames(source, n, cell, mode, sharp=sharp)
+    frames = make_frames(source, n, cell, mode, sharp=sharp,
+                         sharp_model=sharp_model, sharp_scale=sharp_scale)
     fh, fw = frames[0].shape[:2]
     # 1080p 一帧 1920 宽, 默认列数 round(sqrt(120))=11 -> 21120px 超限, 压到 8 列
     sheet, cols, rows, regions = F.pack(frames, premultiply=False, cols=8 if fw >= 1600 else None)
@@ -301,19 +346,124 @@ def _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp
         max_size = 1.08 if mode == "full" else 0.5
 
     step(tr("packing the effect bundle Ef%s (texture compression, can take a minute)"), eid)
+    # 界面传来的画面参数原样打一行：位移不生效时要能分清是「没传到」还是「传了没用」
+    log.info("runfx.video %s: max_size=%s offset=(%s, %s) rotation=%s",
+             card, max_size, offset_x, offset_y, rotation)
     data = build_bundle(chassis.read_bytes(), sheet, cols, rows, n, duration, eid,
-                        max_size, aspect=fw / fh)
+                        max_size, aspect=fw / fh,
+                        offset_x=offset_x, offset_y=offset_y, rotation=rotation)
     lp = effect_path(eid)
     tx.put_file(get_crc(lp), data)
     tx.set_catalog(lp, tx.catalog.deps(CHASSIS) or [])
-    if tx.runfx_gate.for_card(card):
-        tx.drop_runfx_card(card)
-    tx.add_runfx([R.clean_entry(tx.runfx_gate.template(), card, effect_path(eid, token=True), se_label, duration)])
+    # 只换「自己」那条。双条目卡（自己/对手各一条）里 player=1 是对手，
+    # 资源名带 Op（#4887、#14627 都是）。整张卡一起 drop 会把对手那条也顶掉，
+    # 结果你做的视频在对手发动时也播。
+    mine = S.self_entries(tx.runfx_gate.for_card(card))
+    player = mine[0].get("player") if mine else 2
+    if mine:
+        tx.drop_runfx_entries(mine)
+    tx.add_runfx([R.clean_entry(tx.runfx_gate.template(), card, effect_path(eid, token=True),
+                                se_label, duration, player=player)])
     tx.rec.meta = {"source": str(source), "effect_id": eid, "frames": n, "sheet": list(sheet.size),
-                   "grid": [cols, rows], "max_size": max_size}
-    return tx.commit()
+                   "grid": [cols, rows], "max_size": max_size,
+                   "offset_x": offset_x, "offset_y": offset_y, "rotation": rotation}
+    rec = tx.commit()
+    # 新的一版已经落盘并且接管了 gate，现在才轮到清理旧的。
+    # 顺序反过来会在生成失败时把用户原来的特效删掉。
+    _retire_old(ctx, card, rec, old)
+    return rec
 
 
+def _retire_old(ctx, card: int, keep, old) -> None:
+    """回收这张卡上被新一版顶掉的旧特效（2026-11-13 用户定稿：生成成功即回收）。
+
+    为什么必须回收：free_id() 每次都避开用过的号，所以重新生成写的是另一个
+    Ef 号，旧文件不会自动被覆盖。一个视频特效 bundle 常有几十到上百 MB，
+    留着就是永久孤儿——manifest 里还有登记、盘上还占着，但没有任何卡在用它。
+
+    删之前必须确认没有别的卡借用它：`runfx.borrow` 可以让一张卡直接播别人做的
+    效果号（gate 里指向同一条 Ef），删掉那张卡的动画就进游戏卡死了。
+    needed_files() 里已经有这套判断（借用记录指向的 bundle 也算它的依赖）。
+    """
+    from mdstudio.core.catalog import Catalog
+    from mdstudio.ops.tx import needed_files
+
+    if ctx.dry_run or not old:
+        return
+    gone = {r.id for r in old}
+    others = [r for r in ctx.journal.load() if r.id not in gone]
+    # 还有谁在用这些 Ef：别的记录登记过的依赖 + 它们借用的效果号
+    in_use = set()
+    for r in others:
+        in_use |= needed_files(r)
+
+    removable = []
+    for r in old:
+        eid = r.meta.get("effect_id")
+        if not eid:
+            continue
+        h = get_crc(effect_path(int(eid)))
+        if f"{h[:2]}/{h}" in in_use:
+            log.info(tr("Ef%s is still used by another card, kept"), eid)
+            continue
+        removable.append((r, int(eid)))
+    if not removable:
+        return
+
+    # 不走 undo()：它会顺手把 gate 条目删掉、把更早的 runfx_removed 补回来。
+    # 新一版已经接管 gate，这里只需要清理文件、manifest 和 journal 记录。
+    try:
+        cat = Catalog(ctx.game)
+        for r, eid in removable:
+            lp = effect_path(eid)
+            cat.remove(lp)
+            for rel in r.created:
+                ctx.delete(ctx.game.abs(rel))
+        cat.save(ctx)
+        ctx.journal.drop([r.id for r, _ in removable])
+        # 关键: 被回收的旧条目必须从新记录的 runfx_removed 里剔掉。
+        #
+        # 重新生成时 drop_runfx_card 会把上一版的 gate 条目塞进新记录的
+        # runfx_removed，可上一版的 bundle 刚被上面删掉。留着的话，之后点「复原」，
+        # undo 会把这条补回 gate —— 指向一个已经不存在的 Ef 文件，游戏进对局直接
+        # 报「文件读取错误 Duel/Timeline/Card/.../EfNNNNN」，而且 journal 里没有
+        # 记录认领这条 gate 条目，卡片会显示成「官方特效」、复原按钮也变灰。
+        # 剔掉之后，复原的结果就是这张卡没有特效，正好等于回游戏原版。
+        from mdstudio.core.gate import runfx_sig
+        gone_sigs = {runfx_sig(e) for r, _ in removable for e in r.runfx_added}
+        left = [e for e in keep.runfx_removed if runfx_sig(e) not in gone_sigs]
+        # 交接：旧记录里存着「动手之前游戏本来是什么样」。不交接的话，再生成一次
+        # 就把官方条目弄丢了，复原只能回到无特效，回不去官方特效。
+        seen = {runfx_sig(e) for e in left}
+        for r, _ in removable:
+            for e in r.runfx_removed:
+                sig = runfx_sig(e)
+                if sig not in seen:
+                    left.append(e)
+                    seen.add(sig)
+        if len(left) != len(keep.runfx_removed):
+            keep.runfx_removed = left
+            ctx.journal.update([keep])
+        # 旧 Ef 是新建文件，基线里记的是「原本不存在」；记录都删了，
+        # manifest 里对应的条目也一起清掉，免得留下永远对不上的死条目
+        b = ctx.journal.baselines
+        b.forget(card, "runfx", {rel for r, _ in removable for rel in [*r.created, *r.modified]})
+        # 这一族的记录全撤完才删基线，别连别的族的一起删
+        from mdstudio.core.baseline import family_for
+        if not any(x.card == card and family_for(x.op) == "runfx"
+                   for x in ctx.journal.load()):
+            b.drop(card, "runfx")
+        log.info(tr("retired %s old effect(s) for %s"), len(removable), card)
+    except Exception as e:
+        # 回收失败不影响本次生成（新的已经在跑），但要说出来，别静默留垃圾
+        log.warning(tr("old effect cleanup failed for %s: %s"), card, e)
+
+
+# 注意: 这个函数是就地改写一张**已经生成好**的 bundle, 跟 build_bundle 造新文件不同。
+# 2026-11-14: 曾把它接进 WinUI 做成「应用调节」按钮, 用户点了之后游戏报
+# 「文件读取错误 Ef<id>」, 卡片状态也从自改特效掉成官方特效。已从界面撤掉。
+# 现在只剩 CLI / 旧 PySide 界面 / TUI 在用, 且只改 max_size。要用在界面上之前,
+# 必须先在真游戏里验证过改写后的 bundle 能被读进来。
 def set_framing(ctx, card: int, max_size: float):
     """只改 m_MaxParticleSize, 不用重建 (重建 142MB 图集要好几分钟)"""
     recs = [r for r in ctx.journal.for_card(card) if r.op == "runfx.video"]

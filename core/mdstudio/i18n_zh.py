@@ -13,6 +13,7 @@ ZH: dict[str, str] = {
     "badge|yes": "已有",
     "yours": "本工具添加",
     "WIPED": "已被更新清除",
+    "borrowed": "借用",
     "missing argument: %s": "缺少参数：%s",
     "cancelled": "已取消",
     "%s (name or ID): ": "%s（名字或 ID）：",
@@ -25,6 +26,7 @@ ZH: dict[str, str] = {
     "video / gif / frame folder": "视频 / GIF / 帧文件夹",
     "Spine export, bundle, zip or folder of them": "Spine 导出目录、bundle、zip 或它们的文件夹",
     "no file given": "没有给文件",
+    "no sound label given": "没有指定音效",
     "card names unavailable: %s": "卡名数据不可用：%s",
     '"%s" matches several cards:': '"%s" 匹配到多张卡片：',
     '"%s": did you mean': '"%s"：你想找的是',
@@ -202,8 +204,8 @@ ZH: dict[str, str] = {
     "video, gif or frame folder (drag it in)": "视频、GIF 或帧文件夹（拖进来）",
     "px per frame (height for full)": "每帧像素（全屏时是高度）",
     "seconds (the cut-in Timeline is stretched to fit)": "秒（召唤动画时间轴会拉伸适配）",
-    "skeleton width: full default 4800 = fills a 16:9 screen; others 2750 (game ~2456)":
-        "骨架宽度：全屏默认 4800 铺满 16:9；其他 2750（游戏约 2456）",
+    "skeleton width: full default 4800 = fills a 16:9 screen; others 2930 (peak ~110% of the screen height at 1440p)":
+        "骨架宽度：全屏默认 4800 铺满 16:9；其他 2930（1440p 下峰值约占 110% 屏高）",
     "full = whole video as is, nothing cut (default); matte = AI cut-out of the character":
         "full = 整段视频原样，不裁切（默认）；matte = AI 抠出角色",
     "Real-ESRGAN (needs MDSTUDIO_ESRGAN)": "Real-ESRGAN 锐化（需要 MDSTUDIO_ESRGAN）",
@@ -219,7 +221,7 @@ ZH: dict[str, str] = {
     "don't use the video's own audio (default: use it, carried on --sound or SE_EV_EF09279_v1)":
         "不用视频自带声音（默认用，挂在 --sound 或 SE_EV_EF09279_v1 上）",
     # ---- 展示值: timing (ops/runfx.py TIMING, 各界面共用) ----
-    "chain": "连锁",
+    "chain": "连锁发动",
     "negated": "被无效",
     "destroyed": "破坏",
     "moved": "移动",
@@ -536,8 +538,8 @@ ZH: dict[str, str] = {
     "From a video / GIF / frame folder": "从视频 / GIF / 帧文件夹",
     "Video": "视频",
     "Video (*.mp4 *.webm *.mov *.gif);;All (*)": "视频 (*.mp4 *.webm *.mov *.gif);;全部 (*)",
-    "4800 = fills a 16:9 screen. ~2750 = the size of Konami's cut-ins":
-        "4800 = 铺满 16:9 屏幕。约 2750 = K 社召唤动画的大小",
+    "4800 = fills a 16:9 screen. 2930 = the peak fills 110% of the screen height":
+        "4800 = 铺满 16:9 屏幕。2930 = 峰值约占 110% 屏高",
     "Konami pop-in zoom": "K 社弹出缩放",
     "Sharpen (Real-ESRGAN)": "锐化（Real-ESRGAN）",
     "Source": "来源",
@@ -676,9 +678,35 @@ ZH: dict[str, str] = {
     "(install with replace to swap it)": "卡图 %s：这张卡游戏自带超框，跳过（用「覆盖已有」可以换掉）",
     "%s already exists. Pick another name or move it away.": "%s 已存在。换个名字，或把它移走。",
     "%s already has a cut-in from this tool. Remove it first.": "%s 已有本工具加的召唤动画。先移除它。",
+    "no donor has %s texture pages (%s needed). Use fewer frames or a smaller frame size.":
+        "没有来源卡能放下 %s 页贴图（需要 %s）。把帧数或「像素/帧」调小一点。",
+    "%s: its chassis has %s texture page(s) in %s, cloning from %s instead":
+        "%s：这套底盘在 %s 只有 %s 页贴图，改用 %s 克隆一份双页底盘。",
+    "no donor has %s texture pages (%s needed). Use a source with fewer pages.":
+        "没有来源卡能放下 %s 页贴图（需要 %s）。换一份页数少一点的素材。",
+    "%s: chassis has too few texture pages, cloning from %s instead":
+        "%s：这套底盘贴图页数不够，改用 %s 克隆一份。",
+    "keeping the SD textures as the chassis has them (low-quality compat is off)":
+        "低清纹理保持底盘原样（「低清纹理兼容」没勾）",
+    "also rewrite the SD textures (low-quality setting). Default: follow the setting page":
+        "连低清（SD）贴图一起重写。默认跟随设置页里的「低清纹理兼容」",
+    "leave the SD textures as the chassis has them":
+        "低清（SD）贴图保持底盘那套，不重写",
+    "low-quality compat writes a single texture page: %s frames allow at most about %spx per frame (now %s)":
+        "低清兼容只写一页贴图：%s 帧最多约 %spx 一帧（当前 %s）",
+    "P%s: can't find its skeleton data to point the animation at":
+        "P%s：找不到它的骨架数据，动画引用没法改过去",
+    "pointing the animation reference at the HD skeleton":
+        "动画引用已改指高清骨架",
+    "%s already has a cut-in from this tool. Restore it first.":
+        "%s 已有本工具加的召唤动画。先点「复原」再生成。",
     "%s already has a game cut-in. Use force to replace it.": "%s 已有游戏自带的召唤动画。用 force 才能替换。",
     "%s already has a game effect. Use replace to swap it.": "%s 已有游戏自带的特效。用 replace 才能替换。",
     "%s already has an effect from this tool. Remove it first.": "%s 已有本工具加的发动特效。先移除它。",
+    "%s already has an effect from this tool. Restore it first.":
+        "%s 已有本工具加的发动特效。先点「复原」再生成。",
+    "donor %s only has an opponent-side entry, nothing to borrow":
+        "来源卡 %s 只有对手那一条条目，没有可借的",
     "%s dependency file(s) missing on disk, e.g. %s. Run resync, or open those cards once in game.":
         "盘上缺 %s 个依赖文件，例如 %s。运行 resync，或在游戏里见过那些卡。",
     "%s game files for %s %s (%s bundle(s))": "%s %s %s 的游戏文件（%s 个 bundle）",
@@ -688,6 +716,8 @@ ZH: dict[str, str] = {
     "%s has no audio track": "%s 没有音轨",
     "%s has no audio track. Untick 'use the video's own audio'.": "%s 没有音轨。取消勾选'使用视频自带的声音'。",
     "%s has no cut-in, can't be a donor": "%s 没有召唤动画，不能当来源卡",
+    "%s has no decodable audio": "%s 里没有可解码的音频",
+    "%s is built into the game app and cannot be previewed": "%s 内置在游戏程序里，无法试听",
     "%s is built into the game app (data.unity3d), not a downloaded file, so it can't be replaced. "
     "Give the effect another sound label and replace that one instead.":
         "%s 内置在游戏程序里（data.unity3d），不是下载下来的文件，换不了。给特效换个音效标签，替换那个。",
@@ -735,13 +765,25 @@ ZH: dict[str, str] = {
     "background removal found no character in any frame": "抠图在任何一帧里都没找到角色",
     "backup missing for %s, left as is": "%s 的备份不见了，按原样保留",
     "bad card entry in pack, skipped": "整合包里有个卡的条目是坏的，跳过",
+    "a task is still running. Wait for it to finish, then switch account.": "还有动作在跑，等它完成再切换账号。",
+    "bad card entry in pack": "整合包里有个卡的条目是坏的",
+    "bad layer block in pack": "整合包里的分层信息格式不对",
+    "bad layer path in pack: %s": "整合包里的分层路径不合法：%s",
+    "bad layer params for %s, skipped": "%s 的分层参数不对，跳过",
+    "layer file gone, exporting without it: %s": "分层素材已不在，导出时不带它：%s",
+    "layers for %s skipped: %s": "%s 的分层素材跳过：%s",
+    "layer file missing inside the pack: %s": "整合包内缺分层素材：%s",
+    "layer file empty or too large: %s": "分层素材是空的或太大：%s",
+    "layer file is not a valid image: %s": "分层素材不是有效的图片：%s",
     "building the %sx%s sheet (%s frames)": "拼 %sx%s 的序列帧（%s 帧）",
     "building the sheet": "拼序列帧",
     "can't find the video particle in the bundle": "在 bundle 里找不到视频粒子",
     "can't read %s": "读不了 %s",
     "can't read the length of %s": "读不了 %s 的长度",
     "can't save the card name cache: %s": "卡名缓存存不下去：%s",
+    "can't save the card index cache: %s": "卡数据缓存存不下去：%s",
     "can't save the real card id cache: %s": "真卡号缓存存不下去：%s",
+    "can't save the unity table cache: %s": "卡表缓存存不下去：%s",
     "card names aren't loaded, use the card ID": "卡名还没加载，用卡 ID",
     "card text key not found (game format changed?)": "找不到卡文本密钥（游戏格式变了？）",
     "card %s has no artwork": "卡 %s 没有卡图",
@@ -810,15 +852,31 @@ ZH: dict[str, str] = {
     "packing the effect bundle Ef%s (texture compression, can take a minute)":
         "压缩特效 bundle Ef%s（贴图压缩，可能要一分钟）",
     "rate/channels not supported by FSB5": "FSB5 不支持这个采样率/声道数",
+    "locating game data": "定位游戏数据",
+    "parsing cards": "解析卡片",
+    "preparing the card index": "准备卡片数据",
     "reading %s frame(s) from %s": "读 %s 帧，来自 %s",
     "reading %s image(s) from %s": "读 %s 张图，来自 %s",
+    "reading card tables": "读卡片表",
     "reading frames": "读帧",
+    "reading game data tables": "读游戏数据表",
     "resizing": "缩放",
     "resizing %s frame(s)": "缩放 %s 帧",
     "sharpening": "锐化",
     "sharpening %s frame(s)": "锐化 %s 帧",
     "sheet %sx%s is over the %spx limit. Use fewer frames or a smaller size.":
         "序列帧 %sx%s 超过 %s 像素上限。少用几帧，或把尺寸调小。",
+    "no frames to pack": "没有可以打包的帧",
+    "sheet is over the %spx limit. Use fewer frames or a smaller size.":
+        "序列帧超过 %s 像素上限。少用几帧，或把每帧像素调小。",
+    "%s borrows its cut-in from %s, registering it as its own":
+        "%s 的召唤动画是从 %s 借来的，已登记成用它自己的",
+    "pick a donor card for this animation first": "先选一张来源卡。这张卡自己没有召唤动画，要从有动画的卡复制一套。",
+    "sheet is over the %spx limit even split in two. Use fewer frames or a smaller size.":
+        "分成两页也超过 %s 像素上限。少用几帧，或把每帧像素调小。",
+    "this cut-in chassis has only one texture page, but the sheet needs two. "
+    "Clone from a two-page card (see the donor list) first.":
+        "这套动画底盘只有一页贴图，而序列帧需要两页。请先用带两页贴图的来源卡克隆一份。",
     "taking the sound out of %s": "从 %s 抽声音",
     "taking the sound out of a video needs ffmpeg. Run:  python -m pip install imageio-ffmpeg":
         "从视频抽声音需要 ffmpeg。运行：python -m pip install imageio-ffmpeg",
@@ -1037,6 +1095,42 @@ ZH: dict[str, str] = {
     "card art %s: re-registered as over-frame": "卡图 %s：已重新登记为超框",
     "card art registration not restored: %s": "卡图登记没能补回：%s",
     "over-frame table: restored %s official entries": "超框登记表：补回 %s 条官方条目",
+    "download failed: %s": "下载失败：%s",
+    "download failed: nothing was written": "下载失败：没有写入任何数据",
+    "nothing was written": "没有收到任何数据",
+    "download was interrupted: %s": "下载中断：%s",
+    "nothing left to undo for this pack": "这个包已经没有可撤的内容了",
+    "this pack was already fully reverted; %s change(s) from before the install were left untouched":
+        "这个包之前已经复原过了。另有 %s 条是安装之前就有的改动，没有动；要撤请在对应页面或历史页操作。",
+    "no such install record (see history)": "找不到这条安装记录（见历史页）",
+    "this install record has no detail; undo it card by card in history":
+        "这条安装记录没有明细，请在历史页逐卡撤销",
+    "over-frame table restored for %s": "超框登记表已为 %s 恢复",
+    "over-frame table not restored: %s": "超框登记表没能恢复：%s",
+    "already fetched is kept, press download again to resume":
+        "已经下好的部分会保留，再点一次「下载」就能接着下。",
+    "the server returned %s": "服务器返回 %s",
+    "the connection was cut off by the server": "连接被服务器中途断开",
+    "verifying %s": "校验 %s",
+    "retrying %s (%s)": "重试 %s（%s）",
+    "the connection timed out": "连接超时",
+    "the connection could not be opened": "连不上服务器",
+    "checksum mismatch": "文件对不上（可能没下完）",
+    "no data came through": "没有收到任何数据",
+    "checksum mismatch (got %s)": "校验不通过（得到 %s），已删除重下",
+    "%s is missing from the package": "压缩包里找不到 %s",
+    "downloading %s": "正在下载 %s",
+    "picking the fastest mirror": "正在测速，选最快的源…",
     "spine version converter not found at %s": "找不到 Spine 版本转换器：%s",
     "spine version upgrade failed (exit %s): %s": "Spine 版本升级失败（退出码 %s）：%s",
+
+    # ---- 基线层（2026-11-13）----
+    "baseline %s <- %s": "已存基线 %s -> %s",
+    "baseline copy failed for %s, retry on next write: %s": "基线复制失败：%s，下次写入会重试（%s）",
+    "baseline manifest not saved for %s: %s": "基线清单没写进去：%s（%s）",
+    "over-frame draft not saved for %s: %s": "超框草稿没存进去：%s（%s）",
+    "over-frame draft snapshot failed for %s: %s": "超框草稿快照失败：%s（%s）",
+    "Ef%s is still used by another card, kept": "Ef%s 还被别的卡用着，保留",
+    "retired %s old effect(s) for %s": "已回收 %s 个旧特效（卡 %s）",
+    "old effect cleanup failed for %s: %s": "旧特效回收失败：%s（%s）",
 }

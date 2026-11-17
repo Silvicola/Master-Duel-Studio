@@ -331,7 +331,13 @@ def apply(ctx, image, which=("lobby", "shop")) -> dict:
     与卡图/超框完全一致。整张纹理按 _fit（contain）烘进原尺寸，不裁切。
     """
     from mdstudio.ops.tx import Tx
+    from mdstudio import probe
 
+    # 界面选图时已经查过一次，这里是第二道：命令行或以后新增的入口也走这条路。
+    # 不查的话非图片会抛 UnidentifiedImageError，用户看到的是一串英文栈。
+    r = probe.check(image, "image")
+    if not r["ok"]:
+        raise MDStudioError(r["reason"])
     src = Image.open(image).convert("RGBA")
     if not isinstance(which, (list, tuple)):
         which = (which,)

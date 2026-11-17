@@ -97,14 +97,27 @@ def _looks_like_game(p) -> bool:
     return ld.is_dir() and any(ld.glob("*/0000"))
 
 
-def detect_game_dir(override=None) -> Path:
+_DETECTED = None   # 进程内缓存: 探测要读注册表、翻 Steam 清单、摸各盘符,
+                   # 设置页反复进出不该每次都重扫一遍
+
+
+def detect_game_dir(override=None, force: bool = False) -> Path:
     """按可靠程度找游戏目录
 
     顺序: 参数 > 环境变量 > Steam 应用清单 > 猜固定文件夹名 > 卸载信息 > 扫盘.
     全部失败才报错, 界面上再让用户手选.
+
+    结果会缓存到进程结束：第一次可能要读注册表、解析 vdf、探盘符，
+    之后的调用直接返回。用户点「重新检测」时传 force=True 强制重扫。
     """
+    global _DETECTED
+    if override:
+        return Path(override)
+    if not force and _DETECTED is not None and _looks_like_game(_DETECTED):
+        return _DETECTED
+
     libs = _steam_libraries()
-    cands = [override, os.environ.get("MDSTUDIO_GAME")]
+    cands = [os.environ.get("MDSTUDIO_GAME")]
     cands += [_from_manifest(lib) for lib in libs]                 # 最准
     cands += [lib / "steamapps" / "common" / GAME_DIR_NAME for lib in libs]
     cands.append(_from_uninstall())
@@ -112,7 +125,8 @@ def detect_game_dir(override=None) -> Path:
 
     for c in cands:
         if c and _looks_like_game(c):
-            return Path(c)
+            _DETECTED = Path(c)
+            return _DETECTED
     raise GameNotFound(tr("Master Duel not found. Pass --game <folder> or set MDSTUDIO_GAME."))
 
 
@@ -145,11 +159,18 @@ class Game:
                     return r
             raise GameNotFound(tr("account %s not found under %s") % (group, self.localdata))
 
-        # 没指定账号时的兜底: 挑文件最多的. 只在用户还没选过账号时走到这里,
-        # 两个账号文件数可能只差几十个, 所以这个判断不可靠, 界面上要让用户明确选
-        def count(r):
-            return sum(len(os.listdir(d)) for d in r.iterdir() if d.is_dir())
-        return max(roots, key=count)
+        # 没指定账号时的兜底：按目录名取第一个。
+        #
+        # 以前是「挑子目录文件最多的那个」，但那个判断既贵又不可靠：
+        # 要遍历每个账号的 257 个子目录（合计 40000+ 文件，实测 91ms），
+        # 而本机两个账号的文件数**完全相同**（各 40889 个），挑出来纯看遍历顺序，
+        # 每次还可能不一样。Game 每开一个 Ctx 就建一次，设置页一次打开建好几个，
+        # 光这一项就白等几百毫秒。
+        #
+        # 账号就是 LocalData/<账号>/0000 的目录名，取哪个都能用；用户一旦在设置页
+        # 选过就存在 settings 里，走上面 group 那条路，根本不进这里。所以这里只要
+        # **稳定**即可，sorted 取第一个既确定又零成本。
+        return sorted(roots, key=lambda r: r.parent.name)[0]
 
     @classmethod
     def detect(cls, override=None, group: str = None) -> "Game":

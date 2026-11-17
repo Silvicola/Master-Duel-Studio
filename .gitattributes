@@ -1,0 +1,26 @@
+# 这个目录里的文件按字节比对校验（见 core/mdstudio/assets.py 的 present()：
+# 逐个文件比大小、下载完比 sha256）。行尾转换会改变字节数，导致明明在盘上
+# 也被判成「未下载」，用户点一次下载又把 LF 版本写回去（2026-11-13 实测：
+# LICENSE.txt 仓库里 4563 字节，checkout 成 CRLF 后 4694 字节）。
+# 二进制与素材一律不做行尾转换，保证盘上字节与 assets_index.json 一致。
+tools/spineconv/** -text
+tools/matting/** -text
+tools/overframe/** -text
+tools/realesrgan/** -text
+*.exe binary
+*.dll binary
+*.onnx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.zip binary
+*.fsb binary
+
+# 源码保持自动换行（Windows 上 CRLF，不影响 Python / C# 编译）
+*.py text
+*.cs text
+*.xaml text
+*.csproj text
+*.json text
+*.md text

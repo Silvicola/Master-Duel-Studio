@@ -13,7 +13,8 @@ import UnityPy
 from PIL import Image
 
 from mdstudio import runtime
-from mdstudio.core.bundle import retag, retag_str, set_image
+from mdstudio.core.bundle import (bundle_cab, keep_atlas_materials, new_cab,
+                                  rename_pages as rename_page_names, retag, retag_str, set_image)
 from mdstudio.core.crc import get_crc
 from mdstudio.errors import MDStudioError
 from mdstudio.i18n import tr
@@ -25,10 +26,22 @@ from mdstudio.progress import tick
 log = logging.getLogger("mdstudio")
 
 OP = "cutin.spine"
-DONOR = C.DEFAULT_DONOR
+# 导入用的底盘（来源卡）由调用方按卡片类型取，见 cutin.donor_for() 与 default_donor()
 ANIM = "animation"
 SPINE_SHADER = "Spine/Skeleton"
 RUNTIME = (4, 2)
+
+
+def _anim_field(tt) -> str:
+    """动画名存哪个字段：来源卡的资产叫 animationName，另一些叫 _animationName。
+
+    2026-11-17 实测六张来源卡的 animation 资产全是 animationName，而代码里只查
+    带下划线的那个，于是取不到动画名、也改不了名。两种都认。
+    """
+    for k in ("_animationName", "animationName"):
+        if k in tt:
+            return k
+    return ""
 MAP_FILE = "cards.json"
 SCAN_DEPTH = 4
 BUNDLE_EXT = (".bundle", ".ab", ".unity3d", ".assetbundle", ".zip")
@@ -165,16 +178,21 @@ def rename_pages(atlas: str, mrk: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-def rename_anim(skel: bytes, anim: str) -> bytes:
-    if not anim or anim == ANIM:
+def rename_anim(skel: bytes, anim: str, rename_to: str = ANIM) -> bytes:
+    """把素材里的 anim 改名成 rename_to。
+
+    rename_to 通常是底盘 Timeline 引用的那个名字（11016 是 animation，14952 是
+    animation_kde）。名字对不上，游戏去骨架里取动画就取不到，停在初始姿势。
+    """
+    if not anim or anim == rename_to:
         return skel
     j = json.loads(skel.decode("utf-8"))
     anims = j.get("animations") or {}
     if anim not in anims:
         raise MDStudioError(tr("skeleton has no animation %s") % anim)
-    if ANIM in anims:
-        anims[ANIM + "_orig"] = anims.pop(ANIM)
-    j["animations"] = {(ANIM if k == anim else k): v for k, v in anims.items()}
+    if rename_to in anims:
+        anims[rename_to + "_orig"] = anims.pop(rename_to)
+    j["animations"] = {(rename_to if k == anim else k): v for k, v in anims.items()}
     return json.dumps(j, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
@@ -185,7 +203,44 @@ def spine_version(skel: bytes):
 
 CONVERTER_DIR = "tools/spineconv"
 CONVERTER_EXE = "SpineSkeletonDataConverter.exe"
-CONVERTER_TARGET = "4.2.11"
+CONVERTER_TARGET = "4.2.20"
+
+
+def probe_version(path):
+    """只读骨架版本，不建 Source（不碰贴图），用于导入前的预检。
+
+    读不出来返回 None：路径不对、格式不对这些错让正式流程去报，
+    预检只负责回答"要不要转换器"。
+    """
+    p = Path(path)
+    try:
+        if p.is_dir():
+            for f in p.iterdir():
+                if f.is_file() and f.suffix.lower() in (".json", ".txt"):
+                    v = spine_version(f.read_bytes())
+                    if v:
+                        return v
+            return None
+        if zipfile.is_zipfile(p):
+            with zipfile.ZipFile(p) as z:
+                for n in z.namelist():
+                    if n.lower().endswith((".json", ".txt")):
+                        v = spine_version(z.read(n))
+                        if v:
+                            return v
+            return None
+        for o in UnityPy.load(p.read_bytes()).objects:
+            if o.type.name != "TextAsset":
+                continue
+            s = _text(o.read())
+            if not s.lstrip().startswith("{"):
+                continue
+            v = spine_version(s.encode("utf-8", "surrogateescape"))
+            if v:
+                return v
+    except Exception:
+        return None
+    return None
 
 
 def _converter_path():
@@ -298,7 +353,7 @@ class Source:
                     tt = o.read_typetree()
                 except Exception:
                     continue
-                if "skeletonDataAsset" in tt and "_animationName" in tt:
+                if "skeletonDataAsset" in tt and _anim_field(tt):
                     sa = tt
         if skel is None or atlas is None:
             raise MDStudioError(tr("%s: no Spine skeleton JSON + atlas inside") % (label or "bundle"))
@@ -312,7 +367,7 @@ class Source:
         scale = pos = None
         if sa:
             scale, pos = _node_transform(env, sa["m_GameObject"]["m_PathID"])
-        return cls(skel, atlas, textures, anim=(sa or {}).get("_animationName") or None,
+        return cls(skel, atlas, textures, anim=(sa or {}).get(_anim_field(sa or {})) or None,
                    loop=(sa or {}).get("loop"), scale=scale, pos=pos, label=label)
 
     @classmethod
@@ -481,7 +536,7 @@ def _put_texture(o, tex):
     o.save_typetree(tt)
 
 
-def swap(data: bytes, mrk: int, src: Source, spine_mat=None) -> bytes:
+def swap(data: bytes, mrk: int, src: Source, spine_mat=None, anim_name: str = ANIM) -> bytes:
     env = UnityPy.load(data)
     pages = {f"P{mrk}": 0, f"P{mrk}_2": 1}
     changed = False
@@ -492,7 +547,7 @@ def swap(data: bytes, mrk: int, src: Source, spine_mat=None) -> bytes:
             d = o.read()
             s = _text(d)
             if s.lstrip().startswith("{"):
-                d.m_Script = rename_anim(src.skel, src.anim).decode("utf-8", "surrogateescape")
+                d.m_Script = rename_anim(src.skel, src.anim, anim_name).decode("utf-8", "surrogateescape")
             elif ".png" in s[:300]:
                 d.m_Script = rename_pages(src.atlas, mrk)
             else:
@@ -514,8 +569,9 @@ def swap(data: bytes, mrk: int, src: Source, spine_mat=None) -> bytes:
                 tt = o.read_typetree()
             except Exception:
                 continue
-            if "skeletonDataAsset" in tt and "_animationName" in tt:
-                tt["_animationName"] = ANIM
+            f = _anim_field(tt)
+            if "skeletonDataAsset" in tt and f:
+                tt[f] = anim_name
                 if src.loop is not None and "loop" in tt:
                     tt["loop"] = src.loop
                 o.save_typetree(tt)
@@ -565,28 +621,117 @@ def _spine_material(env, mat_obj, tt, spine_mat):
     mat_obj.save_typetree(new)
 
 
-def port(ctx, target: int, src_file, force=False, anim=None, scale=1.0):
+def default_donor(ctx, mrk: int) -> int:
+    """按这张卡的类型取来源卡（灵摆按第二个属性）。界面没传 donor 时用。"""
+    return C.default_donor(ctx, mrk)
+
+
+def _skel_seconds(skel: bytes) -> float:
+    """骨架里所有动画的最长末帧时间（秒）。用不上就算 0。"""
+    try:
+        j = json.loads(skel.decode("utf-8"))
+    except Exception:
+        return 0.0
+    best = 0.0
+    stack = [j.get("animations") or {}]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            t = node.get("time")
+            if isinstance(t, (int, float)):
+                best = max(best, float(t))
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return best
+
+
+def port(ctx, target: int, src_file, force=False, anim=None, scale=1.0, donor=None,
+         compat_sd=None):
+    # 先复原再生成，跟视频那条路同一口径（见 cutin.GEN_OPS）
+    if C.generated(ctx, target):
+        raise MDStudioError(tr("%s already has a cut-in from this tool. Restore it first.") % target)
+    if compat_sd is None:
+        from mdstudio import settings as _settings
+        compat_sd = bool(_settings.get("compat_sd", False))
     src_file = Path(src_file)
+    donor = int(donor or default_donor(ctx, target))
     src = Source.load(src_file, anim=anim, scale=scale)
     tx = Tx(ctx, OP, target)
-    C._check(tx, target, DONOR, force)
+    # 素材有几页就得找有几页的底盘：材质槽烘在 P<卡>_Atlas 里，加不出来。
+    # 官方动画卡（底盘是它自己）经常只有一页，两页素材直接写不进去（#21382 报的就是这个）。
+    want_q = [C.HD] + ([C.SD] if compat_sd else [])
+    if any(C.chassis_pages(tx.catalog, donor, q) < len(src.pages) for q in want_q):
+        alt = C.donor_with_pages(ctx, tx.catalog, target, len(src.pages), want_q)
+        if not alt:
+            raise MDStudioError(tr("no donor has %s texture pages (%s needed). Use a source with "
+                                   "fewer pages.") % (len(src.pages), "/".join(want_q)))
+        log.info(tr("%s: chassis has too few texture pages, cloning from %s instead"), target, alt)
+        donor = alt
+    C._check(tx, target, donor, force)
+    C.own_anim(tx, target)
     cat = tx.catalog
-    paths = C.own_paths(cat, DONOR)
+    paths = C.own_paths(cat, donor)
+    anim_name = ANIM
+    try:
+        from mdstudio.ops.video.cutin_flip import donor_anim_name
+        anim_name = donor_anim_name(ctx.game, donor)
+    except Exception:
+        pass
     mats = {}
+    pgs = C.page_rename_map(cat, donor, target)
+
+    def renamed(lp):
+        # 页名先统一成 P<target>_<n>，再换卡号（同 cutin.clone，顺序不能反）
+        return retag_str(rename_page_names(lp, pgs), donor, target)
+
     for lp in paths:
-        if lp.endswith(f"/P{DONOR}_P{DONOR}"):
+        if lp.endswith(f"/P{donor}_P{donor}"):
             q = lp.rsplit("/", 2)[0]
             mats[q] = spine_material(tx.game.find_logical(lp).read_bytes())
+    # 哈希依赖与 CAB 名都要重定向，理由同 cutin.clone
+    crc_map = {get_crc(lp): get_crc(renamed(lp)) for lp in paths}
+    cab_map = {bundle_cab(tx.game.find_logical(lp).read_bytes()): new_cab(get_crc(renamed(lp)))
+               for lp in paths}
     for k, lp in enumerate(paths):
         tick(tr("building"), k + 1, len(paths))
-        tlp = retag_str(lp, DONOR, target)
+        tlp = renamed(lp)
         th = get_crc(tlp)
-        data = retag(tx.game.find_logical(lp).read_bytes(), DONOR, target, th, deep=True)
-        tx.put_file(th, swap(data, target, src, mats.get(lp.rsplit("/", 2)[0])))
+        data = retag(tx.game.find_logical(lp).read_bytes(), donor, target, th, deep=True,
+                     crc_map=crc_map, page_map=pgs, cab_map=cab_map, cab=new_cab(th))
+        # 低清档不动内容：文件照拷（不然清单里缺文件），但骨架图集贴图保持底盘那套
+        if not compat_sd and f"/{C.SD}/" in lp:
+            tx.put_file(th, data)
+            continue
+        out = swap(data, target, src, mats.get(lp.rsplit("/", 2)[0]), anim_name=anim_name)
+        if tlp.endswith(f"P{target}_Atlas"):
+            # 官方数据里材质槽数恒等于图集页数。素材页数比底盘少时（比如单页素材
+            # 放进双页底盘），多出来的槽要裁掉，否则 1 页图集配 2 个槽。
+            out = keep_atlas_materials(out, len(src.pages))
+        tx.put_file(th, out)
+    # 不写 SD 时，SD 档的骨架还是来源卡那套，而动画引用资产挂在 SD 骨架上（见
+    # cutin_flip._retarget_animation）。不改指过去，导入进来也是静止的一帧。
+    if not compat_sd:
+        from mdstudio.ops.video.cutin_flip import _retarget_animation
+        _retarget_animation(tx, target)
+    # 时长对齐到素材：有些来源卡（如 18182）的 clip 是「跟随动画时长」，换过骨架后
+    # 运行时算不出来，clip 变 0 长、角色静止。这一步把 customDuration 改成固定时长。
+    seconds = _skel_seconds(src.skel)
+    if seconds > 0:
+        from mdstudio.ops.video.cutin_flip import set_timeline_duration
+        tl = f"{C.base(target)}/P{target}Timeline"
+        d = tx.read_file(get_crc(tl))
+        if d is not None:
+            tx.put_file(get_crc(tl), set_timeline_duration(d, round(seconds + 0.1, 3)))
+    # 清单条目逐个登记，理由同 cutin.clone（只登 prefab 会让克隆出来的包在清单里查不到）
+    prefabs = {C.prefab(donor, q) for q in C.QUALITIES}
+    for lp in paths:
+        if lp in cat and lp not in prefabs:
+            tx.set_catalog(renamed(lp), [renamed(d) for d in (cat.deps(lp) or [])])
     for q in C.QUALITIES:
-        tx.set_catalog(C.prefab(target, q), [retag_str(d, DONOR, target) for d in cat.deps(C.prefab(DONOR, q))])
+        tx.set_catalog(C.prefab(target, q), [renamed(d) for d in cat.deps(C.prefab(donor, q))])
     tx.add_cutin(target)
-    tx.rec.meta = {"donor": DONOR, "source": src_file.name}
+    tx.rec.meta = {"donor": donor, "source": src_file.name, "compat_sd": bool(compat_sd)}
     if target not in tx.rec.cutin_mrks:
         tx.rec.meta["gate"] = [int(target)]
     rec = tx.commit()
@@ -652,10 +797,12 @@ def validate(game, mrk: int) -> list:
                     tt = o.read_typetree()
                 except Exception:
                     continue
-                if "skeletonDataAsset" in tt and "_animationName" in tt:
-                    sa[q] = tt["_animationName"]
-                elif "animationName" in tt and "skeletonDataAsset" in tt:
-                    ref = tt["animationName"]
+                f = _anim_field(tt)
+                if "skeletonDataAsset" in tt and f:
+                    if f == "_animationName":
+                        sa[q] = tt[f]
+                    else:
+                        ref = tt[f]
     for (q, folder), atlas in atlases.items():
         where = f"{q or '?'}/{folder.rsplit('/', 1)[-1]}"
         for pg in pages_of(atlas):
@@ -696,9 +843,10 @@ def _single(path) -> bool:
     return p.is_file() or _is_export_dir(p)
 
 
-def port_card(ctx, mrk: int, path, force=False, anim=None, scale=1.0):
+def port_card(ctx, mrk: int, path, force=False, anim=None, scale=1.0, donor=None,
+              compat_sd=None):
     f = Path(path) if _single(path) else by_card(path, mrk)[3]
-    kw = {"anim": anim, "scale": scale}
+    kw = {"anim": anim, "scale": scale, "donor": donor, "compat_sd": compat_sd}
     if force and _own_port_only(ctx, mrk):
         return _rebuild(ctx, mrk, f, **kw)
     return port(ctx, mrk, f, force=force, **kw)
