@@ -307,10 +307,14 @@ class Backend:
     @staticmethod
     def _flags(idx, cid) -> dict:
         """所有页面共用的一组卡数据状态，避免各页各自猜。"""
+        from mdstudio.ops import cutin as C
+
         s = idx.status(cid)
         return {"unreleased": s["unreleased"],
                 "unknown_subtype": s["unknown_subtype"],
                 "locked": s["locked"] or not idx.ok,
+                # 来源卡（克隆底盘模板）：界面标徽章并禁用生成/导入，后端另有三处硬拦
+                "donor": C.is_donor_card(cid),
                 "subtype": s["subtype"], "subtype_cn": s["subtype_cn"],
                 "coarse_cn": s["coarse_cn"], "abilities": s["abilities"]}
 
@@ -1595,6 +1599,23 @@ def _sound_track(path):
     return S.extract_video_track(path)
 
 
+def _assets_needs(kind="", source=None, sharp=False):
+    """组件预检。跟 assets.status 一样在主进程直答。
+
+    放在 ACTIONS 里每次会现 spawn 一个 Python，实测光 import 就要 1.07 秒，
+    视频素材还要再 import OpenCV；界面点「生成」到弹确认框之间只做这一件事，
+    用户就以为没点上（2026-11-19 用户实测）。
+    """
+    from . import actions
+    return {"missing": actions.missing_assets(kind, source, sharp)}
+
+
+def _cutin_precheck(kind="cutin.video", source=None, n=0, cell=0, compat_sd=None, sharp=False):
+    from . import actions
+    return actions.cutin_precheck(kind=kind, source=source, n=n, cell=cell,
+                                  compat_sd=compat_sd, sharp=sharp)
+
+
 QUERY = {
     "ping": lambda be, **kw: {"pong": True},
     "info": lambda be, **kw: be.info(),
@@ -1619,6 +1640,12 @@ QUERY = {
     # 走 ACTIONS 那条路每次要现 spawn 一个 Python（实测 265ms），设置页每次都
     # 因此先空一块再「啪」地冒出来。放这里在主进程里答，实测 1ms。
     "assets.status": lambda be, **kw: _assets_status(),
+    # 组件预检与生成前检查：都是只看文件与素材、不碰游戏目录的活，主进程直答。
+    "assets.needs": lambda be, kind="", source=None, sharp=False, **kw:
+        _assets_needs(kind, source, sharp),
+    "cutin.precheck": lambda be, kind="cutin.video", source=None, n=0, cell=0,
+        compat_sd=None, sharp=False, **kw:
+        _cutin_precheck(kind, source, n, cell, compat_sd, sharp),
     "probe.file": lambda be, path="", want="image", **kw: _probe_file(path, want),
     "settings.set": lambda be, **kw: be.settings_set(**kw),
     "pack.list": lambda be, **kw: be.pack_list(),

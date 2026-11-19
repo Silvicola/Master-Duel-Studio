@@ -433,9 +433,10 @@
                                         VerticalAlignment="Center" />
                                 </StackPanel>
                                 <TextBlock
+                                    x:Name="CompatSdHint"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="生成召唤动画时，低清（SD）贴图也一起重写。只写单页贴图，超出上限会提示。"
+                                    Text="生成召唤动画时，低清（SD）贴图也一起重写。只写单页贴图，超出上限会提示。关掉后再生成，低清那份恢复成官方；整合包里开与不开的卡混装时，只有开了的卡在低画质下生效。"
                                     TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch
@@ -443,7 +444,7 @@
                                 Grid.Column="1"
                                 VerticalAlignment="Center"
                                 Toggled="CompatSdSwitch_Toggled"
-                                ToolTipService.ToolTip="默认关：低画质档保留原样，省一次大图编码。开了低画质档也播你自己那套。视频、帧文件夹与 Spine 导入两条路都按这个走。" />
+                                ToolTipService.ToolTip="默认关：低画质档保留原样，省一次大图编码。开了低画质档也播你自己那套。关掉再生成会把低清那份写回生成前；克隆出来的卡没有官方低清资源，那份会保留上一次的内容。视频、帧文件夹与 Spine 导入两条路都按这个走。" />
                         </Grid>
                     </StackPanel>
                 </ContentControl>

@@ -34,18 +34,36 @@ from datetime import datetime as _dt
 
 _INIT = ROOT / "core" / "mdstudio" / "__init__.py"
 _no_stamp = "--no-stamp" in sys.argv   # 调试用: 保留当前版本号, 不按时间刷新
+# 版本号约定（2026-11-18 用户定）：v-主.次.修订-release_年月日时分
+#   主：不常动；次：有功能新增时 +1（如加预览功能 -> 1.1.0）；修订：修 bug 时 +1（如 1.0.1）
+# 时间戳每次打包自动刷新；主.次.修订不动，除非显式 --bump=minor|patch|major。
+_bump = ""
+for _arg in sys.argv:
+    if _arg.startswith("--bump="):
+        _bump = _arg.split("=", 1)[1].strip().lower()
+if _bump not in ("", "patch", "minor", "major"):
+    raise SystemExit("--bump 只接受 patch / minor / major")
 if not _no_stamp:
     _now = _dt.now()
     _stamp = _now.strftime("%Y%m%d%H%M")
     _build = _now.strftime("%Y.%m.%d")
     _src = _INIT.read_text(encoding="utf-8")
+    _vm = _re.search(r'__version__\s*=\s*"v-(\d+)\.(\d+)\.(\d+)', _src)
+    _maj, _min, _pat = (int(x) for x in _vm.groups()) if _vm else (1, 0, 0)
+    if _bump == "major":
+        _maj, _min, _pat = _maj + 1, 0, 0
+    elif _bump == "minor":
+        _min, _pat = _min + 1, 0
+    elif _bump == "patch":
+        _pat += 1
+    _ver = f"v-{_maj}.{_min}.{_pat}-release_{_stamp}"
     # 2026-11-17 起进入正式版，版本号后缀固定 release_（以前的 beta_ 不再写回）
     _src = _re.sub(r'(__version__\s*=\s*")v-[^"]+(")',
-                   lambda m: m.group(1) + f"v-1.0.0-release_{_stamp}" + m.group(2), _src, count=1)
+                   lambda m: m.group(1) + _ver + m.group(2), _src, count=1)
     _src = _re.sub(r'(__build__\s*=\s*")[^"]*(")',
                    lambda m: m.group(1) + _build + m.group(2), _src, count=1)
     _INIT.write_text(_src, encoding="utf-8")
-    print(f"版本号自动写回: v-1.0.0-release_{_stamp}  build {_build}", flush=True)
+    print(f"版本号自动写回: {_ver}  build {_build}", flush=True)
 
 _m = _re.search(r'__version__ = "([^"]+)"', _INIT.read_text(encoding="utf-8"))
 OUT_NAME = f"MDStudio-{_m.group(1) if _m else 'unknown'}"

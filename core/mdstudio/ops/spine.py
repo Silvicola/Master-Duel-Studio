@@ -648,6 +648,9 @@ def _skel_seconds(skel: bytes) -> float:
 
 def port(ctx, target: int, src_file, force=False, anim=None, scale=1.0, donor=None,
          compat_sd=None):
+    # 来源卡不允许改，跟视频那条路同一口径（见 cutin.is_donor_card）
+    if C.is_donor_card(target):
+        raise MDStudioError(tr("%s is a template donor card. Its cut-in cannot be changed.") % target)
     # 先复原再生成，跟视频那条路同一口径（见 cutin.GEN_OPS）
     if C.generated(ctx, target):
         raise MDStudioError(tr("%s already has a cut-in from this tool. Restore it first.") % target)

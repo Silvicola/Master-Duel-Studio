@@ -38,7 +38,20 @@ from mdstudio.i18n import tr
 log = logging.getLogger("mdstudio")
 # 1: 第一版正式格式（2026-11-12）。带 art 类型与超框分层（layers）。
 # 用户明确要求过不做向下兼容：更早的测试格式一律拒绝，报错比静默少装东西好排查。
-FORMAT = 1
+def _pack_major() -> int:
+    """整合包的格式版本 = 软件的主版本号。
+
+    次版本只加功能、不动包结构，所以同一主版本下的包彼此都能装；主版本一变就是
+    结构不兼容。**手工纪律：只要改到包结构（字段改名、目录布局、同名字段语义），
+    必须升主版本号**，否则会出现「装得上但读不对」。
+    自动取值是为了免掉「忘了改 FORMAT」这种失误，历史上这个常量一直手写。
+    """
+    from mdstudio import __version__
+    m = re.search(r"(\d+)", __version__)
+    return int(m.group(1)) if m else 1
+
+
+FORMAT = _pack_major()
 # 分层素材只允许这个形状，防止包里的路径穿越到别处
 _LAYER_RE = re.compile(r"layers/\d+/(art|subject)\.(png|jpe?g|webp)", re.I)
 _LAYER_MAX = 24 << 20      # 单张分层素材上限，再大就不是卡图素材了
@@ -294,9 +307,12 @@ def inspect(pack_path) -> dict:
 
 
 def _validate(meta):
-    if not isinstance(meta, dict) or meta.get("format") != FORMAT or not isinstance(meta.get("cards"), list):
-        raise MDStudioError(tr("unsupported pack format %s")
-                           % (meta.get('format') if isinstance(meta, dict) else '?'))
+    if (not isinstance(meta, dict) or meta.get("format") != FORMAT
+            or not isinstance(meta.get("cards"), list)):
+        # 只说主版本：用户不用理解内部格式号，只需要知道「版本对不上」
+        raise MDStudioError(tr("this pack is from tool version %s, yours is %s. The major version has "
+                              "to match; update the tool, or ask for a pack made by yours.")
+                           % (meta.get('format') if isinstance(meta, dict) else '?', FORMAT))
     for c in meta["cards"]:
         if not isinstance(c, dict) or "mrk" not in c:
             raise MDStudioError(tr("bad card entry in pack"))

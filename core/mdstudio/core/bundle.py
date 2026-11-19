@@ -109,6 +109,38 @@ def bundle_name(h: str) -> str:
     return f"{h[:2]}/{h}"
 
 
+def fix_bundle_dependencies(data: bytes, swap: dict = None, add=()) -> bytes:
+    """改写 AssetBundle.m_Dependencies。
+
+    依赖是 Unity 自动加载的入口，不是可选的注释：跨包引用（AtlasAsset 的 materials、
+    Material 的 _MainTex）只有在对端包里登记了依赖才会被加载，否则 PPtr 落到 null，
+    运行时拿到空材质，画面就是整页图集铺开那种错乱（2026-11-18 #21359 实测）。
+
+    swap: {旧哈希: 新哈希}，命中的依赖换成新的（克隆出来的包还指着来源包的资源）。
+    add:  额外的哈希，没有才补。
+    """
+    env = UnityPy.load(data)
+    for o in env.objects:
+        if o.type.name != "AssetBundle":
+            continue
+        tt = o.read_typetree()
+        out = []
+        for d in tt.get("m_Dependencies") or []:
+            h = d.split("/")[-1]
+            if swap and h in swap:
+                h = swap[h]
+            n = bundle_name(h)
+            if n not in out:
+                out.append(n)
+        for h in add:
+            n = bundle_name(h)
+            if n not in out:
+                out.append(n)
+        tt["m_Dependencies"] = out
+        o.save_typetree(tt)
+    return env.file.save(packer="lz4")
+
+
 def retag(data: bytes, old: int, new: int, h: str, deep: bool, crc_map: dict = None,
           page_map: dict = None, cab_map: dict = None, cab: str = None) -> bytes:
     """P<old> -> P<new>
@@ -272,7 +304,10 @@ def fix_clip_duration_mode(data: bytes) -> bytes:
     来源卡有一半是 customDuration=0（运行时向骨架要动画时长，如 14952/18182），
     一半是 1（如 3881）。纯克隆不改骨架，怎么都播；一旦把骨架换成逐帧动画，
     runtime 解析不到那个时长，clip 变 0 长，角色停在初始姿势（2026-11-17 实测）。
-    纯克隆和视频生成都走这个函数，时长数值本身由 set_timeline_duration 另设。
+
+    2026-11-18 曾把这段改成「保留原值」想解决播两遍，结果 Spine 导入的卡
+    （#22804 借用 #14952 的官方动画★）进游戏后骨架静止不动、只有一帧，
+    现象与 11-17 修的完全一致。这条修复必须保留，撤回即回归。
     """
     env = UnityPy.load(data)
     hit = 0

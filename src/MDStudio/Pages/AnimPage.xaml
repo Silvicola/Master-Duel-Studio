@@ -340,6 +340,12 @@
                                         Visibility="{x:Bind SpecialVisibility}" />
                                     <TextBlock
                                         FontSize="11"
+                                        Foreground="{ThemeResource SystemFillColorAttentionBrush}"
+                                        Text="来源卡"
+                                        ToolTipService.ToolTip="{x:Bind DonorTip}"
+                                        Visibility="{x:Bind DonorVisibility}" />
+                                    <TextBlock
+                                        FontSize="11"
                                         Foreground="{x:Bind KindCurrent, Converter={StaticResource StatusBrush}}"
                                         Text="{x:Bind TagCurrent}"
                                         ToolTipService.ToolTip="{x:Bind TagTipCurrent}"
@@ -724,6 +730,7 @@
                                             MinWidth="96"
                                             HorizontalAlignment="Stretch"
                                             SelectedIndex="0"
+                                            ToolTipService.ToolTip="默认：25% 淡入起步，约三分之一处冲到 108%，回落到 76%，缓回 90% 收尾。自定义可以自己写关键帧。"
                                             Visibility="Collapsed"
                                             SelectionChanged="CurvePresetBox_SelectionChanged">
                                             <ComboBoxItem Content="默认" />
@@ -752,7 +759,7 @@
                                         </Grid.RowDefinitions>
                                         <NumberBox x:Name="FramesBox" Grid.Row="0" Grid.Column="0" HorizontalAlignment="Stretch" Header="帧数" Maximum="200" Minimum="4" SpinButtonPlacementMode="Inline" Value="120" ToolTipService.ToolTip="总帧数。帧数 ÷ 时长 = 每秒帧数，72 帧配 1.6 秒就是 45fps。越多越顺，图集也越大；一张装不下会分两页，两页还装不下就得减帧数或减边长。" />
                                         <NumberBox x:Name="DurBox" Grid.Row="0" Grid.Column="2" HorizontalAlignment="Stretch" Header="时长（秒）" Maximum="15" Minimum="0.4" SmallChange="0.1" SpinButtonPlacementMode="Inline" Value="4.8" ToolTipService.ToolTip="动画播多久。游戏里那段 Timeline 会被拉到这个长度，改长改短都生效。" />
-                                        <NumberBox x:Name="CellBox" Grid.Row="0" Grid.Column="4" HorizontalAlignment="Stretch" Header="像素/帧" Maximum="2728" Minimum="128" SmallChange="10" SpinButtonPlacementMode="Inline" Value="1664" ToolTipService.ToolTip="每帧贴图的边长（正方形）。只影响清晰度和包体大小，不改屏幕上大小。角色在屏幕上越大，这个值越该跟着大：调小会糊，调大只是白占空间。" />
+                                        <NumberBox x:Name="CellBox" Grid.Row="0" Grid.Column="4" HorizontalAlignment="Stretch" Header="像素/帧" Maximum="4096" Minimum="128" SmallChange="10" SpinButtonPlacementMode="Inline" Value="1664" ToolTipService.ToolTip="每帧贴图的边长（正方形）。只影响清晰度和包体大小，不改屏幕上大小。角色在屏幕上越大，这个值越该跟着大：调小会糊，调大只是白占空间。4096 是游戏官方素材的上限，再大没有画质收益。实际能用多大还看帧数：一页装不下会自动分两页，两页还装不下会提示减帧数或减这个值。" />
                                         <NumberBox x:Name="SizeBox" Grid.Row="0" Grid.Column="6" HorizontalAlignment="Stretch" Header="角色尺寸" Maximum="8000" Minimum="500" SmallChange="50" SpinButtonPlacementMode="Inline" Value="2930" ToolTipService.ToolTip="骨骼宽度，决定动画在屏幕上多大。4800 大约铺满 16:9 屏宽，2930 是常用档。" />
                                         <NumberBox x:Name="OffXBox" Grid.Row="1" Grid.Column="0" HorizontalAlignment="Stretch" Header="左右移（帧图 px）" SmallChange="10" SpinButtonPlacementMode="Inline" ToolTipService.ToolTip="以帧图像素计：填「像素/帧」那个数正好挪一个帧图宽，正数向右。跟「角色尺寸」一起缩放。" Value="0" />
                                         <NumberBox x:Name="OffYBox" Grid.Row="1" Grid.Column="2" HorizontalAlignment="Stretch" Header="上下移（帧图 px）" SmallChange="10" SpinButtonPlacementMode="Inline" ToolTipService.ToolTip="以帧图像素计：填「像素/帧」那个数正好挪一个帧图高，正数向上。跟「角色尺寸」一起缩放。" Value="0" />

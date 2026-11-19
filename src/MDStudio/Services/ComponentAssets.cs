@@ -16,6 +16,42 @@ public sealed record AssetItem(string Key, string Label, long Size);
 /// </summary>
 internal static class ComponentAssets
 {
+    /// <summary>生成前检查的结果：缺哪些组件、以及第一个挡路的原因（组件齐了才有）。</summary>
+    internal sealed record Precheck(List<AssetItem> Missing, string? Block);
+
+    /// <summary>
+    /// 一次问清生成前的三件事：缺哪些组件、素材帧数够不够、按参数算出几页。
+    ///
+    /// 走 QUERY 直答，不起子进程（`assets.needs` 以前在 ACTIONS 里，每次现 spawn
+    /// 一个 Python，光 import 就 1.07 秒，界面点「生成」到弹确认框之间只做这一件事，
+    /// 用户会以为没点上）。返回 null 表示这一下没问到，调用方不该开始写盘。
+    /// </summary>
+    public static async Task<Precheck?> CutinPrecheckAsync(string kind, string? source,
+                                                           bool sharp, int n, int cell)
+    {
+        if (App.Engine is not { } engine) return null;
+        JsonElement r;
+        try
+        {
+            r = await engine.CallAsync("cutin.precheck", new { kind, source, sharp, n, cell });
+        }
+        catch (Exception ex)
+        {
+            App.AddLog("WARN", $"生成前检查没做成：{ex.Message}");
+            return null;
+        }
+        if (r.ValueKind != JsonValueKind.Object) return null;
+
+        var missing = new List<AssetItem>();
+        if (r.TryGetProperty("missing", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            foreach (var a in arr.EnumerateArray())
+                missing.Add(new AssetItem(Str(a, "key"), Str(a, "label"), Num(a, "size")));
+
+        string? block = null;
+        if (r.TryGetProperty("block", out var b) && b.ValueKind == JsonValueKind.Object)
+            block = Str(b, "message");
+        return new Precheck(missing, block);
+    }
     /// <summary>
     /// 这次操作缺哪些组件。kind：spine / cutin.video / runfx.video。
     ///

@@ -19,8 +19,7 @@ def register(name: str, needs_ctx: bool = True):
     return deco
 
 
-@register("assets.needs", needs_ctx=False)
-def _assets_needs(ctx, kind, source=None, sharp=False):
+def missing_assets(kind, source=None, sharp=False):
     """这次操作会用到哪些可选组件，现在缺哪几个。
 
     界面在动作开始前问一遍，缺了就引导去设置页下载，不硬着头皮跑。
@@ -48,15 +47,74 @@ def _assets_needs(ctx, kind, source=None, sharp=False):
             if sharp:
                 add("realesrgan")
             if source:
-                from mdstudio.ops.video import cutin_flip as CF
+                from mdstudio.ops.video import frames as F
 
                 # 两条路都走 make_frames 的 auto 判定：有透明通道就用现成的、
                 # 有幕布色才跑模型、两样都没有就整帧原样
-                if CF.needs_matte(source):
+                if F.needs_matte(source):
                     add("matting")
     except Exception:
-        return {"missing": []}
-    return {"missing": found}
+        return []
+    return found
+
+
+def cutin_precheck(kind="cutin.video", source=None, n=0, cell=0, compat_sd=None, sharp=False):
+    """生成前一次问清三件事：缺哪些组件、素材够不够帧、按参数要几页。
+
+    优先级跟界面提示一致：组件 > 素材帧数 > 页数，只回第一条挡路的原因。
+    用户改一个参数往往能顺带解决后面的，一次报一堆只会让人不知道该先动哪个。
+
+    页数按「每帧占 cell × cell」估，不看裁剪后的实际宽高：只用用户设的两个数就能
+    得到结论，可预期。真实帧通常更窄，容量只会更大，所以这里拒绝的，正式流程
+    （用真实宽高再算一次）不会推翻。
+    """
+    from mdstudio.i18n import tr
+
+    missing = missing_assets(kind, source, sharp)
+    out = {"missing": missing, "block": None}
+    if missing:
+        return out          # 缺组件先解决，参数问题等装完再看
+
+    if not (n and cell):
+        return out
+    if compat_sd is None:
+        try:
+            from mdstudio import settings as _settings
+
+            compat_sd = bool(_settings.load().get("compat_sd", False))
+        except Exception:
+            compat_sd = False
+
+    from mdstudio.ops.video import frames as F
+
+    have = F.source_frames(source) if source else None
+    out["frames_have"] = have
+    out["frames_need"] = n
+    if have is not None and have < n:
+        out["block"] = {
+            "why": "frames",
+            "message": tr("the source has only %s frame(s) but %s were requested. Lower the "
+                          "frame count or use a longer clip.") % (have, n),
+        }
+        return out
+
+    per_page = (F.MAX_TEX // cell) ** 2
+    pages = -(-n // per_page)
+    out["pages"] = pages
+    if pages > 1 and compat_sd:
+        out["block"] = {
+            "why": "pages",
+            "message": tr("%s frames at %spx don't fit one texture page (low-quality compat "
+                          "writes a single page). Lower the size per frame or reduce the count.")
+                       % (n, cell),
+        }
+    elif pages > 2:
+        out["block"] = {
+            "why": "pages",
+            "message": tr("%s frames at %spx need more than two texture pages. Lower the size per "
+                          "frame or reduce the frame count.") % (n, cell),
+        }
+    return out
 
 
 @register("assets.ensure", needs_ctx=False)

@@ -37,6 +37,11 @@ public sealed partial class AnimPage : Page
     // 也会发事件（2026-11-11 用户实测：动画页底部出现"正在下载 %s"和别人的进度条）。
     // 本页常驻订阅不退订（切走要保自己的进度流），所以只能靠这个标志过滤。
     private bool _jobActive;
+    /// <summary>当前选中的卡是来源卡：生成与导入按钮要锁死，任务收尾时按它复原按钮。</summary>
+    private bool _donorLocked;
+    /// <summary>正在跑生成前的检查。入口守卫：检查期间重复点击直接忽略，
+    /// 免得两次预检都去弹框（同一 XamlRoot 只允许一个 ContentDialog）。</summary>
+    private bool _checking;
     /// <summary>「效果 = 自定义」时用户填的曲线串，存在内存里，不写进每个 NumberBox。</summary>
     private string _customCurve = "";
 
@@ -454,6 +459,8 @@ public sealed partial class AnimPage : Page
                 CoarseCn = Str(c, "coarse_cn"),
                 SpecialNote = c.TryGetProperty("special", out var sp) && sp.ValueKind == JsonValueKind.String
                     ? sp.GetString() ?? "" : "",
+                // 来源卡：后端从 cutin.DONORS 算出来，界面标徽章并禁用生成/导入按钮
+                IsDonor = c.TryGetProperty("donor", out var dn) && dn.ValueKind == JsonValueKind.True,
                 CutinSrc = c.TryGetProperty("src", out var src) && src.ValueKind == JsonValueKind.Number
                     ? src.GetInt32() : 0,
                 CutinSrcName = Str(c, "src_name"),
@@ -749,18 +756,25 @@ public sealed partial class AnimPage : Page
         RestoreButton.IsEnabled = InCutinMode ? card.HasOurs : card.HasOursRunfx;
         StateLine.Text = StateLineOf(card);
 
-        // 三档统一：官方动画、官方★、无动画都用我们自己的来源卡，都可选。
-        // HasFixedSource 现在恒为 false，这里保留判据是为了以后要再收紧时只改一处。
-        var needDonor = !card.HasFixedSource;
+        // 只有「没有自己高清底盘」的卡才用来源卡：★（借用底图）和无动画。
+        // 官方动画是原地替换骨架与贴图、自改动画用的是它自己那份，选来源卡都不生效，
+        // 显示出来只会让人以为能换底盘（2026-11-19 用户指出这一点）。
+        // Cutin 的原值是 game / yours / wiped / shared，空串表示没有动画。
+        var needDonor = string.IsNullOrEmpty(card.Cutin) || card.Cutin == "shared";
         DonorPanel.Visibility = needDonor ? Visibility.Visible : Visibility.Collapsed;
-        if (needDonor)
-        {
-            DonorHint.Text = "按召唤类型挑来源卡，整套动画复制给这张卡，来源卡不受影响。";
-            // 下拉在重载时被重建过（Items.Clear 会清掉选中态），按框里现在这张补回来，
-            // 否则会出现「来源卡是 11358、预设却显示按类型选」（2026-11-12 用户实测）。
-            SyncDonorPreset(ReadDonorId(DonorBox) ?? -1);
-            _ = FillDonorAsync(card);
-        }
+        DonorHint.Text = card.Cutin == "shared"
+            ? "这张卡没有自己的高清资源，生成会用选定的来源卡给它克隆一套。"
+            : "按召唤类型挑来源卡，整套动画复制给这张卡，来源卡不受影响。";
+        // 面板藏起来也要把值填上：后端 apply 第一步就要求 donor 非空，官方卡虽然不拿它
+        // 当底盘，缺了这个参数会直接报「先选一张来源卡」。
+        // 下拉在重载时被重建过（Items.Clear 会清掉选中态），按框里现在这张补回来，
+        // 否则会出现「来源卡是 11358、预设却显示按类型选」（2026-11-12 用户实测）。
+        SyncDonorPreset(ReadDonorId(DonorBox) ?? -1);
+        _ = FillDonorAsync(card);
+
+        // 来源卡：后端在视频生成、Spine 导入、换贴图三个入口都硬拦，界面把按钮一起锁掉，
+        // 别让用户点一次再看到报错。
+        ApplyDonorLock(card);
 
         // 音效跟着当前卡走
         UpdateSoundUi();
@@ -768,6 +782,23 @@ public sealed partial class AnimPage : Page
         // 预设时长首次要跑三次 ffmpeg（约 1.2 秒）。趁切卡在后台预热，
         // 免得用户点开弹窗时干等；之后走索引缓存只要 3 毫秒。
         if (!_presetsLoaded) _ = LoadPresetsAsync(true);
+    }
+
+    /// <summary>
+    /// 来源卡不允许改召唤动画。
+    ///
+    /// 它是无动画卡的克隆底盘：页数和材质槽会被后来克隆的卡继承，改过之后那些卡会跟着
+    /// 漂到不匹配的结构。后端在视频生成、Spine 导入、换贴图三处硬拦，这里只是把按钮
+    /// 一起锁掉，免得用户白点一次。复原不受这条限制。
+    /// </summary>
+    private void ApplyDonorLock(CardItem card)
+    {
+        _donorLocked = card.IsDonor;
+        if (_jobActive) return;   // 任务在跑时按钮由 SetRunning 统一管，收尾会再调回来
+        BuildButton.IsEnabled = !_donorLocked;
+        SpineImportButton.IsEnabled = !_donorLocked;
+        BuildButton.Content = _donorLocked ? "来源卡不可修改" : "生成召唤动画";
+        SpineImportButton.Content = _donorLocked ? "来源卡不可修改" : "导入到这张卡";
     }
 
     /// <summary>
@@ -779,6 +810,9 @@ public sealed partial class AnimPage : Page
     {
         if (InCutinMode)
         {
+            // 来源卡优先说明：它的动画本来就不许改，再写「可以覆盖」会误导
+            if (card.IsDonor)
+                return "这张卡是来源卡，其它卡的克隆底盘都用它，不能改它的召唤动画。";
             if (card.HasOurs)
                 return card.CutinOrigin switch
                 {
@@ -789,7 +823,7 @@ public sealed partial class AnimPage : Page
             if (card.CutinSrc > 0)
                 return "这张卡现在播的是借来的动画，生成会用选定的来源卡单独建一套。";
             if (card.Cutin.Length > 0)
-                return "这张卡自带官方召唤动画，生成会用选定的来源卡覆盖它。";
+                return "这张卡自带官方召唤动画，生成会原地替换骨架和贴图，官方演出结构保留。";
             return "这张卡还没有召唤动画，选定来源卡后生成一套。";
         }
 
@@ -2014,6 +2048,24 @@ public sealed partial class AnimPage : Page
     // --------------------------------------------------------------- 生成
     private async void BuildButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_checking) return;
+        _checking = true;
+        // 预检几百毫秒，只把按钮按下去，不加转圈：200ms 的 spinner 会闪一下，
+        // 比不显示更难看。真正长的那段由 SetRunning 的遮罩接管。
+        BuildButton.IsEnabled = false;
+        try
+        {
+            await BuildCutinAsync();
+        }
+        finally
+        {
+            BuildButton.IsEnabled = true;
+            _checking = false;
+        }
+    }
+
+    private async Task BuildCutinAsync()
+    {
         if (_current is not { } card || App.Engine is not { } engine) return;
 
         if (card.HasOurs)
@@ -2035,9 +2087,28 @@ public sealed partial class AnimPage : Page
             return;
         }
 
-        // 先问后端这次要不要抠像 / 超分，缺组件就去设置页装，别等跑一半才报错
-        if (!await ComponentAssets.EnsureAsync(XamlRoot, "cutin.video", SourceBox.Text, SelectedScale() > 0))
+        // 先问清「这次跑不跑得了」：缺组件、素材帧数不够、按参数算出超过两页，
+        // 三条一次问完，只报第一条。顺序是有意的——参数压根不成立的活不该让用户
+        // 先点一次「继续」才知道。预检走主进程直答，几百毫秒回来，不用先弹框充数。
+        var pre = await ComponentAssets.CutinPrecheckAsync(
+            "cutin.video", SourceBox.Text, SelectedScale() > 0,
+            (int)Num(FramesBox, 120), (int)Num(CellBox, 1664));
+        if (pre is null)
+        {
+            await InfoAsync("组件状态没查成",
+                "引擎这一下没回话，没有开始任何写入。等几秒再点一次就好。", danger: true);
             return;
+        }
+        if (pre.Missing is { Count: > 0 })
+        {
+            await ComponentAssets.PromptAsync(XamlRoot, pre.Missing);
+            return;
+        }
+        if (!string.IsNullOrEmpty(pre.Block))
+        {
+            await InfoAsync("失败", $"游戏文件没有改动。\n{pre.Block}", danger: true);
+            return;
+        }
 
         // 所有档位都问一次：写进游戏是不可忽略的动作。
         // 只有「自带官方动画」才是真的顶掉游戏资源，用覆盖专用文案；
@@ -2702,15 +2773,17 @@ public sealed partial class AnimPage : Page
                 RestoreButton.IsEnabled = !running && _current?.HasOursRunfx == true;
                 break;
             case "spine":
-                SpineImportButton.IsEnabled = !running;
-                SpineImportButton.Content = running ? "导入中…" : "导入到这张卡";
+                SpineImportButton.IsEnabled = !running && !_donorLocked;
+                SpineImportButton.Content = running ? "导入中…"
+                    : (_donorLocked ? "来源卡不可修改" : "导入到这张卡");
                 SpineSourceBox.IsEnabled = !running;
                 FxCancelButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
                 RestoreButton.IsEnabled = !running && _current?.HasOurs == true;
                 break;
             default:
-                BuildButton.IsEnabled = !running;
-                BuildButton.Content = running ? "生成中…" : "生成召唤动画";
+                BuildButton.IsEnabled = !running && !_donorLocked;
+                BuildButton.Content = running ? "生成中…"
+                    : (_donorLocked ? "来源卡不可修改" : "生成召唤动画");
                 CancelButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
                 SetCutinFormEnabled(!running);
                 RestoreButton.IsEnabled = !running && _current?.HasOurs == true;
@@ -2967,7 +3040,14 @@ public sealed partial class AnimPage : Page
         _upscaleGuard = true;
         UpscaleBox.SelectedIndex = s.Upscale switch { 2 => 1, 4 => 2, _ => 0 };
         _upscaleGuard = false;
-        if (s.Preset >= 0) CurvePresetBox.SelectedIndex = s.Preset;
+        // 「自定义曲线」那一档会触发编辑弹窗（见 CurvePresetBox_SelectionChanged）。
+        // 方案自带曲线，切方案时不该弹框，这里把事件拦掉。
+        if (s.Preset >= 0)
+        {
+            _schemeLoading = true;
+            CurvePresetBox.SelectedIndex = s.Preset;
+            _schemeLoading = false;
+        }
         if (s.Preset == 1) _customCurve = s.Curve;
         SyncCurveUi();
     }
@@ -3083,7 +3163,8 @@ public sealed partial class AnimPage : Page
         };
         var hint = new TextBlock
         {
-            Text = "每段写 (帧,缩放,透明度)，百分比，段与段连着写；帧号从左到右递增。",
+            Text = "每段写 (帧,缩放,透明度)，百分比，段与段连着写；帧号只表示先后和比例，"
+                 + "跟总帧数无关。「默认」那条是 25% 起、冲到 108%、回落到 76%、收尾 90%。",
             TextWrapping = TextWrapping.Wrap,
             FontSize = 12,
         };

@@ -686,12 +686,12 @@ ZH: dict[str, str] = {
         "没有来源卡能放下 %s 页贴图（需要 %s）。换一份页数少一点的素材。",
     "%s: chassis has too few texture pages, cloning from %s instead":
         "%s：这套底盘贴图页数不够，改用 %s 克隆一份。",
-    "keeping the SD textures as the chassis has them (low-quality compat is off)":
-        "低清纹理保持底盘原样（「低清纹理兼容」没勾）",
+    "P%s: put %s low-quality file(s) back the way they were before":
+        "P%s：低清（SD）那 %s 个文件已写回生成前的样子",
     "also rewrite the SD textures (low-quality setting). Default: follow the setting page":
         "连低清（SD）贴图一起重写。默认跟随设置页里的「低清纹理兼容」",
-    "leave the SD textures as the chassis has them":
-        "低清（SD）贴图保持底盘那套，不重写",
+    "put the SD textures back the way they were before the last cut-in":
+        "把低清（SD）贴图写回上一次生成之前的样子",
     "low-quality compat writes a single texture page: %s frames allow at most about %spx per frame (now %s)":
         "低清兼容只写一页贴图：%s 帧最多约 %spx 一帧（当前 %s）",
     "P%s: can't find its skeleton data to point the animation at":
@@ -723,6 +723,12 @@ ZH: dict[str, str] = {
         "%s 内置在游戏程序里（data.unity3d），不是下载下来的文件，换不了。给特效换个音效标签，替换那个。",
     "%s is not a clone. Reskinning a borrowed cut-in would repaint the donor too. Clone it first.":
         "%s 不是克隆。给借来的动画换皮会连来源卡一起改。先克隆。",
+    "%s is a template donor card. Its cut-in cannot be changed.":
+        "%s 是来源卡（其它卡克隆底盘的模板），不能修改它的召唤动画。",
+    "could not clear the custom material overrides on the prefab, keeping it as is":
+        "清不掉 prefab 上的自定义材质覆盖，按原样保留",
+    "cleared the custom material overrides in the %s prefab":
+        "已清掉 %s 的 prefab 里那份自定义材质覆盖",
     "%s not found": "找不到 %s",
     "%s not found in %s": "%s 里没有 %s",
     "%s was already replaced by this tool. Restore it first.": "%s 已被本工具替换过。先还原。",
@@ -777,6 +783,10 @@ ZH: dict[str, str] = {
     "layer file is not a valid image: %s": "分层素材不是有效的图片：%s",
     "building the %sx%s sheet (%s frames)": "拼 %sx%s 的序列帧（%s 帧）",
     "building the sheet": "拼序列帧",
+    "%s frames at %spx don't fit one texture page (low-quality compat writes a single page). Lower the size per frame or reduce the count.": "%s 帧按每帧 %s 像素放不进一页贴图（低清兼容只写一页），请调小像素/帧或减少帧数",
+    "%s frames at %spx need more than two texture pages. Lower the size per frame or reduce the frame count.": "%s 帧按每帧 %s 像素需要超过两页贴图，请调小像素/帧或减少帧数",
+    "%s frames at %spx need about %s GB of memory. Reduce the frame count or the size per frame.": "%s 帧按每帧 %s 像素大约要 %s GB 内存，请减少帧数或调小像素/帧",
+    "the source has only %s frame(s) but %s were requested. Lower the frame count or use a longer clip.": "素材只有 %s 帧，但要生成 %s 帧，请减少帧数或换更长的素材",
     "can't find the video particle in the bundle": "在 bundle 里找不到视频粒子",
     "can't read %s": "读不了 %s",
     "can't read the length of %s": "读不了 %s 的长度",
@@ -828,6 +838,18 @@ ZH: dict[str, str] = {
     "manifest_tcg not found in the active LocalData group": "在当前生效的 LocalData 数据组里找不到 manifest_tcg",
     "missing %s": "缺 %s",
     "missing P%sTimeline": "缺 P%sTimeline",
+    "%s: no Timeline asset found (not as its own bundle, and not "
+    "inside the prefab either).":
+        "%s：找不到它的 Timeline 资产，独立包里没有，prefab 包里也没有。",
+    "P%s: cut-in window %ss (the Timeline lives inside the %s prefab)":
+        "P%s：召唤动画窗口 %s 秒（Timeline 就在 %s 的 prefab 包里）",
+    "P%s: aligned %s more Timeline bundle(s) to %ss":
+        "P%s：另外 %s 个 Timeline 包也对齐到 %s 秒",
+    "P%s: filled %s more embedded bundle(s) with the new skeleton":
+        "P%s：另外 %s 个内嵌包也换成了新骨架",
+    "%s: this card keeps its skeleton inside the %s prefab, "
+    "wrote the skeleton, atlas and window there":
+        "%s：这张卡的骨架整个塞在 %s 的 prefab 包里，骨架、图集和窗口都写在那里",
     "no LocalData group under %s": "%s 下没有 LocalData 数据组",
     "no TextAsset in bundle": "bundle 里没有 TextAsset",
     "no Texture2D %s in bundle": "bundle 里没有名为 %s 的 Texture2D",
@@ -849,6 +871,23 @@ ZH: dict[str, str] = {
     "nothing to export for those cards": "那些卡没有可导出的东西",
     "packing the cut-in textures for P%s (texture compression, can take a minute)":
         "压缩 P%s 的召唤动画贴图（贴图压缩，可能要一分钟）",
+    "P%s: no animation reference asset, skipped retargeting":
+        "P%s：没有动画引用资产，跳过骨架重定向",
+    "P%s: animation reference %s not found, skipped retargeting":
+        "P%s：找不到动画引用资产 %s，跳过骨架重定向",
+    "P%s: animation reference %s has no external skeleton, left as is":
+        "P%s：动画引用 %s 没有外部骨架，保持原样",
+    "P%s: animation reference %s already points at the HD skeleton":
+        "P%s：动画引用 %s 已经指向 HD 骨架",
+    "P%s: pointed the animation reference %s at the HD skeleton":
+        "P%s：动画引用 %s 已改指 HD 骨架",
+    "P%s: the dependency list of %s now loads the HD skeleton":
+        "P%s：%s 的依赖表已改为加载 HD 骨架",
+    "%s plays a cut-in borrowed from another card and has no HD resources "
+    "of its own, so a video cut-in can't be written onto it. Remove its "
+    "cut-in first, then generate; the tool will clone an HD chassis.":
+        "%s 的召唤动画是借用别的卡的，自己没有高清资源，写不进视频帧。先点复原，再生成，"
+        "工具会给它克隆一套高清底盘。",
     "packing the effect bundle Ef%s (texture compression, can take a minute)":
         "压缩特效 bundle Ef%s（贴图压缩，可能要一分钟）",
     "rate/channels not supported by FSB5": "FSB5 不支持这个采样率/声道数",
@@ -874,9 +913,8 @@ ZH: dict[str, str] = {
     "pick a donor card for this animation first": "先选一张来源卡。这张卡自己没有召唤动画，要从有动画的卡复制一套。",
     "sheet is over the %spx limit even split in two. Use fewer frames or a smaller size.":
         "分成两页也超过 %s 像素上限。少用几帧，或把每帧像素调小。",
-    "this cut-in chassis has only one texture page, but the sheet needs two. "
-    "Clone from a two-page card (see the donor list) first.":
-        "这套动画底盘只有一页贴图，而序列帧需要两页。请先用带两页贴图的来源卡克隆一份。",
+    "this cut-in chassis has %s texture page(s) in %s, but the sheet needs %s. Use fewer frames or a smaller frame size.":
+        "这套动画底盘在 %s 里只有 %s 页贴图，而序列帧需要 %s 页。少用几帧，或把每帧像素调小。",
     "taking the sound out of %s": "从 %s 抽声音",
     "taking the sound out of a video needs ffmpeg. Run:  python -m pip install imageio-ffmpeg":
         "从视频抽声音需要 ffmpeg。运行：python -m pip install imageio-ffmpeg",
@@ -890,6 +928,9 @@ ZH: dict[str, str] = {
     "undoing %s change(s)": "撤销 %s 处改动",
     "unsupported WAV sample width %s": "不支持的 WAV 位深 %s",
     "unsupported pack format %s": "不支持的整合包格式 %s",
+    "this pack is from tool version %s, yours is %s. The major version has "
+    "to match; update the tool, or ask for a pack made by yours.":
+        "这个包是 %s 版工具做的，你的是 %s。主版本必须一致：升级工具，或者让对方用你的版本重新导出。",
     "video features need extra packages. Run:  python -m pip install opencv-python-headless":
         "视频功能需要额外包。运行：python -m pip install opencv-python-headless",
     "writing": "写入",

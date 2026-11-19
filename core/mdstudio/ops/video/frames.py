@@ -43,6 +43,29 @@ def _resize(arr: np.ndarray, size: tuple) -> np.ndarray:
     return np.array(Image.fromarray(arr).resize(size, Image.LANCZOS))
 
 
+def source_frames(source) -> int | None:
+    """素材本身有多少帧。帧文件夹数图片，gif 数帧，视频读帧数。
+
+    读不出来就返回 None：不能因为数不准把正常素材挡在门外，真错误留给后面的取帧去报。
+    """
+    src = Path(source)
+    try:
+        if src.is_dir():
+            return sum(1 for p in src.iterdir() if p.suffix.lower() in IMG_EXT)
+        if src.suffix.lower() == ".gif":
+            with Image.open(src) as im:
+                return int(getattr(im, "n_frames", 1))
+        cv2 = _cv2()
+        cap = cv2.VideoCapture(str(src))
+        try:
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        finally:
+            cap.release()
+        return total if total > 0 else None
+    except Exception:
+        return None
+
+
 def sample(source, n: int) -> list:
     """视频 / gif / 帧文件夹 -> 均匀取 n 帧, RGBA uint8 (带透明通道的素材原样保留)"""
     src = Path(source)
@@ -322,6 +345,19 @@ def has_alpha(frames) -> bool:
         if f.ndim == 3 and f.shape[2] == 4 and (f[..., 3] < 250).any():
             return True
     return False
+
+
+def needs_matte(source) -> bool:
+    """这次导入会不会用到 AI 抠像，判断口径和 make_frames 的 auto 分支一致。
+
+    界面在点「生成」之前问一句，缺模型就先让用户去装，别等跑了半分钟才报错。
+    读不出来就当作不需要：真错误留给正式流程去报，这里不能替它下结论。
+
+    放在这里而不是 cutin_flip：预检只是读一帧看看有没有透明通道，不该为了这件事
+    import 整个 cutin_flip（会连带拉进 UnityPy，冷启动多等 0.9 秒）。
+    """
+    raw = sample(source, 1)
+    return bool(raw) and not has_alpha(raw) and pick_key_color(raw[0]) is not None
 
 
 def esrgan_exe():

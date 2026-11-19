@@ -26,18 +26,35 @@ DONOR_BASE_SCALE = 0.20  # 来源卡 Spine 物体的标准缩放，换算见 don
 # 只有 6 个实际档位，normal/effect 共用一张（界面显示「通常／效果」）。
 # 筛选口径：atlas 声明 2 页 + 骨骼最少 + 克隆预演通过。
 DONORS = {
-    "normal": 3881,     # 通常／效果（含衍生物、灵摆通常/效果）共用：3881 元素-英雄 新宇侠
-    "effect": 3881,
-    "fusion": 18182,    # 融合：针渊之弈勇 阿尔克托斯XII
+    # 六个卡型各一张，2026-11-19 用户逐档确认。挑选口径：官方召唤动画、HD 正好 2 页 2 槽、
+    # 不在强力召唤表、Timeline 能定位、prefab 里读得到 Spine 物体缩放、camera2DSize = 5.0。
+    # 这六张在界面上被锁住，不允许改动画：它们是无动画卡的克隆底盘，结构被改过之后，
+    # 之后从它们克隆出来的卡会继承漂移的页数／材质槽。
+    "normal": 3880,     # 通常／效果（含衍生物、灵摆通常/效果）共用：黑魔导
+    "effect": 3880,
+    "fusion": 3435,     # 融合：龙女仆 总管龙女
     "ritual": 15640,    # 仪式：仪龙机巧 降星：天龙
-    "synchro": 7698,    # 同步：巨人斗士
-    "xyz": 11016,       # 超量：混沌编号88 灾难狮子（2 骨，工具底板基准）
-    "link": 13508,      # 连接：水晶机巧 玻璃光纤
-    # 以下三键是上游继承的死数据：donor_for 永不返回，界面预设也不列，保留仅为兼容老数据。
-    "pendulum": 12137,
-    "spell": 11358,
-    "trap": 11358,
+    "synchro": 8121,    # 同调：霞之谷雷神鬼
+    "xyz": 12328,       # 超量：电子光虫 总线独角仙
+    "link": 13088,      # 连接：星杯剑士 阿乌拉姆
 }
+
+
+def donor_cards() -> set:
+    """当前配置里所有来源卡的卡号（normal/effect 共用一张，去重后是 6 张）。"""
+    return set(DONORS.values())
+
+
+def is_donor_card(card: int) -> bool:
+    """这张卡是不是来源卡。
+
+    来源卡是无动画卡的克隆底盘，它的页数与材质槽数会被后来的卡继承。所以它的动画
+    不允许改：改过之后，从它克隆出来的卡会跟着漂到不匹配的结构（2026-11-19 用户定稿，
+    不做开关，没有例外。复原不受限制，复原只会把卡还原）。
+    """
+    return int(card) in donor_cards()
+
+
 # 判定顺序就是子类型里的机制链，灵摆卡靠它落到对应档
 _SECOND = (("融合", "fusion"), ("仪式", "ritual"), ("同调", "synchro"),
            ("超量", "xyz"), ("连接", "link"))
@@ -109,7 +126,10 @@ def donor_scale(game, donor: int) -> float:
                 except Exception:
                     continue
                 nm = names.get(tt.get("m_GameObject", {}).get("m_PathID"), "")
-                if re.match(r"^spin\w*\s*p\d+$", nm.strip(), re.I):
+                # 结尾不能只认纯数字：12328/7698 这类卡的物体叫「Spine P12328JS」，
+                # 多一个 JS 后缀。漏掉它们就退回 0.20 兜底，而真实缩放是 0.25，
+                # 克隆出来的角色会大约偏大 25%（2026-11-19 统计来源卡时发现）。
+                if re.match(r"^spin\w*\s*p\d+\w*$", nm.strip(), re.I):
                     x = (tt.get("m_LocalScale") or {}).get("x")
                     if x:
                         val = float(x)
@@ -181,6 +201,11 @@ def page_tails(cat, mrk: int, quality: str = HD) -> list:
     """
     d = scale_dirs(cat, mrk).get(quality)
     if not d:
+        # 名字对不上卡号的卡（#3898 存的是 P3893）连缩放目录都读不到，先从依赖里反查
+        a = asset_paths(cat, mrk, quality)
+        if a:
+            pre2 = f"{base(mrk)}/{quality}/"
+            return [n[len(pre2):] for n in a["pages"]]
         return []
     pre = f"{base(mrk)}/{quality}/{d}/"
     pat = re.compile(rf"P{mrk}(?:_(\d+)|(\d+))?")
@@ -197,7 +222,57 @@ def page_tails(cat, mrk: int, quality: str = HD) -> list:
         if not m:
             continue
         hit.append((int(m.group(1) or m.group(2) or 1), tail))
+    if not hit:
+        # 名字对不上卡号的卡（#3898 存的是 P3893）：从 prefab 依赖里反查到手
+        a = asset_paths(cat, mrk, quality)
+        if a:
+            pre2 = f"{base(mrk)}/{quality}/"
+            return [n[len(pre2):] for n in a["pages"]]
     return [t for _, t in sorted(hit)]
+
+
+def asset_paths(cat, mrk: int, quality: str = HD):
+    """这张卡某一档的整套资源路径，从 prefab 的依赖里反查。
+
+    不能按 P<卡> 拼：#3898 在自己目录下存了整套名字叫 P3893 的资源（抄 3893 那套
+    来的时候没改名），prefab 的依赖指向它们。按卡号拼会一个都找不到，页数算成 0，
+    生成时这一档被整个跳过（静默无效）。全库有 27 张是这种写法。
+
+    返回 {prefab, atlas, atlas_asset, skeleton, pages, scale}，没有可替换的资源时回 None。
+    """
+    b = base(mrk)
+    prefab_lp = f"{b}/{quality}/P{mrk}"
+    deps = cat.deps(prefab_lp)
+    if not deps:
+        return None
+    mark = f"/{quality}/"
+    atlas_asset = next((d for d in deps if d.startswith(b + "/") and mark in d
+                        and d.endswith("_Atlas")), None)
+    if not atlas_asset:
+        return None
+    stem = atlas_asset[: -len("_Atlas")]
+    rest = stem[len(f"{b}/{quality}/"):]
+    scale = rest.rsplit("/", 1)[0] if "/" in rest else ""
+    # 页贴图三种写法都从 stem 往后接：P<卡> / P<卡>_2 / P<卡>2
+    pages = []
+    for n in deps:
+        if not n.startswith(stem):
+            continue
+        tail = n[len(stem):]
+        if not tail:
+            pages.append((0, n))
+        elif tail.startswith("_") and tail[1:].isdigit():
+            pages.append((int(tail[1:]), n))
+        elif tail.isdigit():
+            pages.append((int(tail), n))
+    # 骨架优先取本档那一份：deps 里 SD 与 HD 各有一个 P<卡>JS，取第一个会拿到 SD 的，
+    # 写进去的骨架和 HD 的 atlas/贴图就对不上（#19148 实测）
+    skel = (next((d for d in deps if d.startswith(b + "/") and f"/{quality}/" in d
+                  and d.endswith("JS") and not d.endswith("JS_SkeletonData")), None)
+            or next((d for d in deps if d.startswith(b + "/") and d.endswith("JS")
+                     and not d.endswith("JS_SkeletonData")), None))
+    return {"prefab": prefab_lp, "atlas": stem + ".atlas", "atlas_asset": atlas_asset,
+            "skeleton": skel, "pages": [n for _, n in sorted(pages)], "scale": scale}
 
 
 def chassis_pages(cat, mrk: int, quality: str = HD) -> int:
@@ -528,6 +603,8 @@ def reskin_export(ctx, target: int, out_dir) -> list:
 
 def reskin_import(ctx, target: int, png_files) -> int:
     """文件名 = reskin_export 导出的名字 (SD_P21365.png ...), 尺寸不变"""
+    if is_donor_card(target):
+        raise MDStudioError(tr("%s is a template donor card. Its cut-in cannot be changed.") % target)
     if not is_cloned(ctx, target):
         raise NotOurs(tr("%s is not a clone. Reskinning a borrowed cut-in would repaint the donor "
                          "too. Clone it first.") % target)

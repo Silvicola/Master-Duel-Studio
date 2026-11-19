@@ -623,7 +623,7 @@ def build_parser():
     x.add_argument("--compat-sd", dest="compat_sd", action="store_true", default=None,
                    help=tr("also rewrite the SD textures (low-quality setting). Default: follow the setting page"))
     x.add_argument("--no-compat-sd", dest="compat_sd", action="store_false",
-                   help=tr("leave the SD textures as the chassis has them"))
+                   help=tr("put the SD textures back the way they were before the last cut-in"))
     x.set_defaults(fn=cmd_spine)
 
     # sound
@@ -699,7 +699,7 @@ def _add_cutin_video_args(x):
     x.add_argument("--compat-sd", dest="compat_sd", action="store_true", default=None,
                    help=tr("also rewrite the SD textures (low-quality setting). Default: follow the setting page"))
     x.add_argument("--no-compat-sd", dest="compat_sd", action="store_false",
-                   help=tr("leave the SD textures as the chassis has them"))
+                   help=tr("put the SD textures back the way they were before the last cut-in"))
     x.add_argument("--preview", help=tr("folder to save sheet + dark preview"))
     x.set_defaults(fn=cmd_cutin_video)
 

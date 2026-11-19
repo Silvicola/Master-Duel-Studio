@@ -59,6 +59,13 @@ public sealed partial class SettingsPage : Page
 
     private const string BusyHint = "有动作在跑，完成前不能切换账号或更改游戏目录。";
 
+    /// <summary>低清兼容那行说明的两种文案。空闲时讲它做什么，跑任务时讲为什么点不了。</summary>
+    private const string SdHintIdle =
+        "生成召唤动画时，低清（SD）贴图也一起重写。只写单页贴图，超出上限会提示。"
+        + "关掉后再生成，低清那份恢复成官方；整合包里开与不开的卡混装时，"
+        + "只有开了的卡在低画质下生效。";
+    private const string SdHintBusy = "生成进行中，暂时不能改这个设置。";
+
     /// <summary>主任务槽进出：跑动作时锁住账号与目录，别让用户切到一半。</summary>
     private void OnMainBusy()
     {
@@ -68,6 +75,10 @@ public sealed partial class SettingsPage : Page
             AccountBox.IsEnabled = !busy;
             ChangeDirBtn.IsEnabled = !busy;
             DetectBtn.IsEnabled = !busy;
+            // 低清兼容决定这次写不写 SD，跑任务时改它会让用户以为对当前这次生效。
+            // 引擎在动作开始那一刻就把开关读进参数了，中途改只影响下一次。
+            CompatSdSwitch.IsEnabled = !busy;
+            CompatSdHint.Text = busy ? SdHintBusy : SdHintIdle;
             if (busy)
                 GameHint.Text = BusyHint;
             else if (GameHint.Text == BusyHint)

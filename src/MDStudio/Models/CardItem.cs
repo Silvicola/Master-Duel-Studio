@@ -399,6 +399,18 @@ public sealed class CardItem : INotifyPropertyChanged
         IsSpecial ? Visibility.Collapsed : Visibility.Visible;
 
     /// <summary>
+    /// 来源卡：无动画卡克隆底盘用的模板（每个卡型一张）。
+    /// 它的页数与材质槽会被后来克隆的卡继承，所以动画不允许改，后端三个入口都硬拦。
+    /// 复原不受限制。
+    /// </summary>
+    public bool IsDonor { get; init; }
+
+    public Visibility DonorVisibility => IsDonor ? Visibility.Visible : Visibility.Collapsed;
+
+    public string DonorTip =>
+        "来源卡：无动画卡克隆底盘用的模板，改了会让之后从它克隆的卡结构错位，所以不能改它的动画";
+
+    /// <summary>
     /// 这张卡的动画有固定的来源（自己原本就有，或超框登记表指定了底图）。
     /// 这类卡不需要用户挑来源卡，克隆也固定用这个号。
     /// 注意用 CutinSrc 而不是 Cutin：克隆完之后 Cutin 会变成 yours，
