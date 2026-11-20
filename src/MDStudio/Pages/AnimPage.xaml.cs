@@ -549,7 +549,7 @@ public sealed partial class AnimPage : Page
         {
             ShowHeader(cur);
             RestoreButton.IsEnabled = InCutinMode ? cur.HasOurs : cur.HasOursRunfx;
-            StateLine.Text = StateLineOf(cur);
+            SetStateLine(cur);
         }
         // 两个模式的内容高度不同，沿用上一页的滚动位置会让标题被顶出可视区
         DetailScroller.ChangeView(null, 0, null, true);
@@ -754,7 +754,7 @@ public sealed partial class AnimPage : Page
         // 刷新 / 复原现在两个模式共用同一套控件，启用状态取当前模式那一维：
         // 动画模式看 HasOurs，特效模式看 HasOursRunfx。
         RestoreButton.IsEnabled = InCutinMode ? card.HasOurs : card.HasOursRunfx;
-        StateLine.Text = StateLineOf(card);
+        SetStateLine(card);
 
         // 只有「没有自己高清底盘」的卡才用来源卡：★（借用底图）和无动画。
         // 官方动画是原地替换骨架与贴图、自改动画用的是它自己那份，选来源卡都不生效，
@@ -806,6 +806,17 @@ public sealed partial class AnimPage : Page
     /// 这样在列表里来回切卡时，这一行的位置和语气都不变，只有内容在换。
     /// 动画与特效两个模式共用这一个控件。
     /// </summary>
+    private void SetStateLine(CardItem card)
+    {
+        StateLine.Text = StateLineOf(card);
+        // 少数卡（#14298 那类）的官方演出本身就是特效，光球、火焰、光环都是骨架里
+        // 额外挂的槽，换成序列帧后这些槽不存在，观感和原版会差很多。只在官方动画
+        // 这一档挂提示，别的状态不打扰。
+        ToolTipService.SetToolTip(StateLine, card.Cutin == "game"
+            ? "少数卡的官方演出本身是特效（光柱、火焰、光环），换成序列帧后观感会和原版不同。"
+            : null);
+    }
+
     private string StateLineOf(CardItem card)
     {
         if (InCutinMode)

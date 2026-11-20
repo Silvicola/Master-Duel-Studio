@@ -4,9 +4,11 @@
 换成自己生成的. 骨架: 1 bone + 1 slot + N 个 region attachment, 一条换图 timeline.
 动画名必须叫 "animation", prefab 播的就是这个名.
 """
+import gzip
 import hashlib
 import json
 import logging
+from pathlib import Path
 
 from mdstudio.core.baseline import family_for
 from mdstudio.core.bundle import (bundle_cab, fix_bundle_dependencies, keep_atlas_materials, new_cab,
@@ -30,7 +32,7 @@ _STAMP_FRAMES = False
 # 25% 淡入起步 → 冲到 108% 过冲 → 砸到 76% 收回 → 缓回 90% 收尾。
 # 帧号只表达比例，gen_skeleton 按「曲线自己的最后一帧」归一化，所以 48/60/72 帧
 # 落点一致（都在 0.545 秒冲顶）。透明度烘进帧图，不写骨架轨道。
-DEFAULT_POP_CURVE = "0,25,20<6,55,50<15,92,85<23,108,100<31,76,100<68,90,100"
+DEFAULT_POP_CURVE = "0,25,60<6,55,75<15,92,92<23,108,100<31,76,100<68,90,100"
 
 _SEG4 = ((255, 45, 45), (255, 205, 0), (0, 205, 85), (45, 135, 255))
 _TINT = 0.45          # 染色强度：既明显偏色，又看得出角色动作
@@ -98,7 +100,7 @@ MAX_DURATION = 15.0
 FULL_SIZE = 4800     # skeleton 宽; 16:9 视频 4800x2700 = 铺满屏幕 (Phainon 实测)
 
 
-def set_timeline_duration(data: bytes, seconds: float) -> bytes:
+def set_timeline_duration(data: bytes, seconds: float, anim: str = "") -> bytes:
     """P<card>Timeline: 把 "animation" 片段的长度对齐到 seconds, 双向生效.
 
     **窗口必须严格等于动画长度, 不能多给.** 官方卡的共同点是 clip 长度与骨架里
@@ -128,7 +130,11 @@ def set_timeline_duration(data: bytes, seconds: float) -> bytes:
             # animation2 / P16632animation / "P16537 animation" 六种写法，
             # 全项目 479 条里只有 399 条叫标准的 animation。按「名字里含 animation」
             # 认，否则遇到 animation_kde 的卡直接判成「没有可拉长的片段」。
-            if "animation" not in str(c.get("m_DisplayName") or "").lower():
+            # 还有一类连 animation 都不含：#19886 的骨架动画叫 kde，Timeline 片段
+            # 也叫 kde（2026-11-20 用户实测报「没有 animation 片段可拉长」）。
+            # 所以再加一条精确匹配：片段名等于这张卡骨架里的动画名。
+            dn = str(c.get("m_DisplayName") or "").lower()
+            if "animation" not in dn and not (anim and dn == anim.strip().lower()):
                 continue
             hit = True
             start = float(c.get("m_Start", 0))
@@ -530,6 +536,9 @@ def make_frames(source, n=48, cell=768, mode="auto", crop_pad=1.04, sharp=False,
         fr = F.matte(raw, crop_pad, key=key)
     else:
         fr = F.opaque(raw, cell, full=(mode == "full"))
+    # 原始帧从这里就交出去了：72 帧 2560² 的 RGBA 约 1.9GB，
+    # 和裁边后的新列表同时驻留会翻倍，#19886 的「高（两页）」就是这样 OOM 的
+    raw = None
     if whole:
         # 坑: fit 按长边缩到 cell, full 的 cell 是"高" -> 1920x1080 被缩成 1080x608, 糊
         fr = F.fit_height(fr, cell)
@@ -558,18 +567,37 @@ def _skeleton_head(data: bytes):
     return cab, 0
 
 
+def _looks_like_anim_reference(data: bytes) -> bool:
+    """包里有没有动画引用资产：AnimationReferenceAsset 同时带 animationName 与 skeletonDataAsset"""
+    import UnityPy
+    try:
+        env = UnityPy.load(data)
+    except Exception:
+        return False
+    for o in env.objects:
+        if o.type.name != "MonoBehaviour":
+            continue
+        try:
+            tt = o.read_typetree()
+        except Exception:
+            continue
+        if "animationName" in tt and "skeletonDataAsset" in tt:
+            return True
+    return False
+
+
 def _anim_asset_name(tx, card: int):
     """这张卡 base 下一层的动画引用资产名。
 
-    实测有 animation / animation_kde / animation2 / P16632animation /
-    "P16537 animation" 几种写法（全项目只有约八成叫标准的 animation）。
-    这里按「名字里含 animation」认，和 set_timeline_duration 匹配 clip 的口径一致。
-    以前 _retarget_animation 按 `{base}/animation` 硬读，其余写法读不到就静默跳过，
-    Timeline 的引用仍指向旧骨架，游戏播的是来源卡那套动画（2026-11-18 用户实测）。
+    不能按名字猜。实测有 animation / animation_kde / animation2 / P16632animation /
+    "P16537 animation"，还有 **kde** 这种一个 animation 都不含的（#19886）。
+    按「包里有没有 animationName + skeletonDataAsset 两个字段」认，与名字无关。
+    以前只按名字含 animation 认，#19886 的引用资产叫 kde，直接被判成「没有引用资产」
+    跳过重定向，游戏里就停在第一帧（2026-11-20 实测）。
     """
     base = C.base(card)
     pref = base + "/"
-    cands = []
+    hits = []
     for name in tx.catalog.names():
         if not name.startswith(pref):
             continue
@@ -577,11 +605,14 @@ def _anim_asset_name(tx, card: int):
         # 只认 base 下一层的资产：HighEnd_HD/... 那些由各自目录自己管
         if not tail or "/" in tail:
             continue
-        if "animation" in tail.lower():
-            cands.append(tail)
-    if not cands:
+        data = tx.read_file(get_crc(name))
+        if data is None:
+            continue
+        if _looks_like_anim_reference(data):
+            hits.append(tail)
+    if not hits:
         return None
-    return "animation" if "animation" in cands else sorted(cands)[0]
+    return "animation" if "animation" in hits else sorted(hits)[0]
 
 
 def _add_texture_page(tx, card: int, quality: str, scale: str, img) -> None:
@@ -749,7 +780,8 @@ def _strip_custom_materials(data: bytes) -> bytes:
         return data
 
 
-def _fill_embedded(data: bytes, skel: str, atlas: str, pages: int, seconds: float):
+def _fill_embedded(data: bytes, skel: str, atlas: str, pages: int, seconds: float,
+                   anim: str = ""):
     """内嵌式 prefab 包：骨架、atlas 文本、AtlasAsset、Timeline 全在这一个包里。
 
     全库有 5 张卡是这种结构（#3438 / #14409 / #16091 / #16740 / #23852）：它们的
@@ -821,7 +853,7 @@ def _fill_embedded(data: bytes, skel: str, atlas: str, pages: int, seconds: floa
 
 
 def _fill_sibling_embedded(tx, card: int, quality: str, skip_h: str, skel: str,
-                           atlas: str, pages: int, seconds: float) -> int:
+                           atlas: str, pages: int, seconds: float, anim: str = "") -> int:
     """同一档里还有别的内嵌包时，也把它们换成新骨架。
 
     #16091 除了 prefab 包，顶层还有一个 `animation 1` 包，里面另存了一份骨架副本，
@@ -843,7 +875,7 @@ def _fill_sibling_embedded(tx, card: int, quality: str, skip_h: str, skel: str,
         data = tx.read_file(h)
         if data is None:
             continue
-        new = _fill_embedded(data, skel, atlas, pages, seconds)
+        new = _fill_embedded(data, skel, atlas, pages, seconds, anim)
         if new is None:
             continue
         tx.put_file(h, new)
@@ -851,7 +883,7 @@ def _fill_sibling_embedded(tx, card: int, quality: str, skip_h: str, skel: str,
     return n
 
 
-def _fix_extra_timelines(tx, card: int, seconds: float, skip=()) -> int:
+def _fix_extra_timelines(tx, card: int, seconds: float, skip=(), anim: str = "") -> int:
     """把这张卡其余 Timeline 包里的 animation clip 也对到同一时长。
 
     内嵌式卡（#16091）除了 prefab 包里那份，顶层还可能有独立的 `P16091Timeline 1`，
@@ -874,7 +906,7 @@ def _fix_extra_timelines(tx, card: int, seconds: float, skip=()) -> int:
         if data is None:
             continue
         try:
-            tx.put_file(h, set_timeline_duration(data, seconds))
+            tx.put_file(h, set_timeline_duration(data, seconds, anim))
         except MDStudioError:
             continue
         n += 1
@@ -908,6 +940,115 @@ def _anim_old_cab(data: bytes):
     return None
 
 
+_SHADER_TT = None
+
+
+def _spine_shader_typetree():
+    """标准 Spine/Skeleton 的 shader 数据，随包内置一份（gzip，约 4 KB）。
+
+    实测 #19886、#21359、#4007、#13924 四张卡材质里的这一刻字节级完全相同，
+    所以不依赖任何一张卡，也不必在运行时从别的卡借。
+    """
+    global _SHADER_TT
+    if _SHADER_TT is None:
+        p = Path(__file__).resolve().parents[2] / "data" / "spine_skeleton_shader.json.gz"
+        with gzip.open(p, "rt", encoding="utf-8") as f:
+            _SHADER_TT = json.load(f)
+    return _SHADER_TT
+
+
+def _normalize_page_materials(tx, card: int, quality: str, pages: int) -> int:
+    """把这次要写的页的材质统一成标准 Spine/Skeleton，返回改了几个材质包。
+
+    官方有把某些 atlas 页做成特效页的：#19886 的第 2 页只装一个 `Effect/Breth`
+    喷气贴图，整页材质是 `TimelineShader/SM/SM_FogLight_Shader`，带 `_FogSpeed`
+    流动与 3 到 6 倍的 HDR 提亮。我们把这些页换成逐帧贴图后，帧图被当特效渲染，
+    角色边缘出现白黄闪光（2026-11-20 实测；#7973 这类连第 1 页都是特效材质）。
+
+    只换 shader 对象、不动材质指针，所以 AtlasAsset 的 materials、externals、
+    依赖表一行都不用改。判据是「不是标准名就换」，不认卡号也不认 shader 名，
+    以后新增的卡与新增的特效 shader 自动覆盖。
+    """
+    import UnityPy
+
+    a = C.asset_paths(tx.catalog, card, quality) or {}
+    atlas_lp = a.get("atlas_asset")
+    if not atlas_lp:
+        return 0
+    data = tx.read_file(get_crc(atlas_lp))
+    if not data:
+        return 0
+    env = UnityPy.load(data)
+    sfs = [x for x in env.file.files.values() if hasattr(x, "externals")]
+    if not sfs:
+        return 0
+    exts = [e.path.split("/")[2] for e in sfs[0].externals]
+    mats = None
+    for o in env.objects:
+        if o.type.name != "MonoBehaviour":
+            continue
+        tt = o.read_typetree()
+        if "materials" in tt:
+            mats = tt["materials"]
+            break
+    if not mats:
+        return 0
+    want = set()
+    for m in mats[:pages]:
+        fid = int(m.get("m_FileID") or 0)
+        if 1 <= fid <= len(exts):
+            want.add(exts[fid - 1])
+    if not want:
+        return 0
+
+    tmpl = None
+    fixed = 0
+    base = C.base(card) + "/"
+    for lp in tx.catalog.names():
+        if not lp.startswith(base):
+            continue
+        h = get_crc(lp)
+        f = tx.game.find(h)
+        # 材质包只有几十 KB；贴图包几十 MB，读它只为算 CAB 太浪费。
+        if f is not None and f.stat().st_size > 3_000_000:
+            continue
+        d = tx.read_file(h)
+        if not d:
+            continue
+        try:
+            cab = bundle_cab(d)
+        except Exception:
+            continue
+        if cab not in want:
+            continue
+        penv = UnityPy.load(d)
+        hit = False
+        for o in penv.objects:
+            if o.type.name != "Material":
+                continue
+            ref = (o.read_typetree().get("m_Shader") or {})
+            if int(ref.get("m_FileID") or 0) != 0:
+                continue
+            sh = next((x for x in penv.objects if x.type.name == "Shader"
+                       and x.path_id == ref.get("m_PathID")), None)
+            if sh is None:
+                continue
+            st = sh.read_typetree()
+            name = (st.get("m_ParsedForm") or {}).get("m_Name") or st.get("m_Name")
+            if name == "Spine/Skeleton":
+                continue
+            if tmpl is None:
+                tmpl = _spine_shader_typetree()
+            sh.save_typetree(tmpl)
+            hit = True
+            log.info(tr("P%s: %s used %s, switched to the standard Spine shader"),
+                     card, lp.rsplit("/", 1)[-1], name)
+        if hit:
+            tx.put_file(h, penv.file.save(packer="lz4"))
+            fixed += 1
+    return fixed
+
+
 def _retarget_animation(tx, card: int):
     """只写 HD 时，把动画引用从 SD 骨架改指 HD 骨架。
 
@@ -932,6 +1073,12 @@ def _retarget_animation(tx, card: int):
     hd_logical = f"{base}/{C.HD}/P{card}JS_SkeletonData"
     hd_data = tx.read_file(get_crc(hd_logical))
     if not hd_data:
+        # 骨架数据的名字也不统一：#11258 / #12487 叫 P<卡>_SkeletonData，没有 JS
+        alt = f"{base}/{C.HD}/P{card}_SkeletonData"
+        alt_data = tx.read_file(get_crc(alt))
+        if alt_data:
+            hd_logical, hd_data = alt, alt_data
+    if not hd_data:
         raise MDStudioError(tr("P%s: can't find its skeleton data to point the animation at") % card)
     hd_cab, hd_pid = _skeleton_head(hd_data)
     if not hd_cab or not hd_pid:
@@ -951,7 +1098,7 @@ def _retarget_animation(tx, card: int):
     key = f"{base}/{name}"
     deps = tx.catalog.deps(key)
     if deps and hd_logical in tx.catalog:
-        tail = f"P{card}JS_SkeletonData"
+        tail = hd_logical.rsplit("/", 1)[-1]
         new_deps = []
         for d in deps:
             if d.endswith(tail) and f"/{C.HD}/" not in d:
@@ -1199,6 +1346,12 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
             # 不写 SD：低清那份已经由 _restore_sd 写回生成前的样子。
             # SD 底盘多数只有一个贴图槽，两页动画写进去会直接失败。
             continue
+        # 官方把某些页做成特效页的，页材质是雾光/火焰类 shader 加 HDR 提亮。
+        # 换页贴图之前先把材质归一，否则帧图会被当特效烧成白黄闪光（#19886）。
+        n_fix = _normalize_page_materials(tx, card, q, pages)
+        if n_fix:
+            log.info(tr("P%s: %s page material(s) were effect shaders, switched to the standard one"),
+                     card, n_fix)
         b = f"{C.base(card)}/{q}"
         scaled = []
         for sheet, regions in sheets:
@@ -1226,7 +1379,7 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
         pdata = tx.read_file(ph)
         if pdata is not None:
             fixed = pdata
-            embedded = _fill_embedded(fixed, skel, atlas, len(scaled), round(duration, 3))
+            embedded = _fill_embedded(fixed, skel, atlas, len(scaled), round(duration, 3), anim_name)
             if embedded is not None:
                 fixed = embedded
                 tl_done = True
@@ -1234,13 +1387,13 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
                             "wrote the skeleton, atlas and window there"), card, q)
                 # 同一档可能还有别的内嵌副本包，一并写，否则 Timeline 走的那条链还是旧骨架
                 extra = _fill_sibling_embedded(tx, card, q, ph, skel, atlas,
-                                               len(scaled), round(duration, 3))
+                                               len(scaled), round(duration, 3), anim_name)
                 if extra:
                     log.info(tr("P%s: filled %s more embedded bundle(s) with the new skeleton"),
                              card, extra)
             elif ph == tl_h:
                 # Timeline 单独嵌在这个 prefab 包里
-                fixed = set_timeline_duration(fixed, round(duration, 3))
+                fixed = set_timeline_duration(fixed, round(duration, 3), anim_name)
                 tl_done = True
                 log.info(tr("P%s: cut-in window %ss (the Timeline lives inside the %s prefab)"),
                          card, round(duration, 3), q)
@@ -1276,12 +1429,12 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
         if tl_data is None:
             raise MDStudioError(tr("%s: no Timeline asset found (not as its own bundle, and not "
                                   "inside the prefab either).") % card)
-        tx.put_file(tl_h, set_timeline_duration(tl_data, round(duration, 3)))
+        tx.put_file(tl_h, set_timeline_duration(tl_data, round(duration, 3), anim_name))
         log.info(tr("P%s: cut-in window %ss, animation %s"), card, round(duration, 3), anim_name)
     else:
         # 内嵌式卡可能还有别的 Timeline 包（#16091 顶层就有一个 P16091Timeline 1），
         # 一并改成同一时长。prefab 包已经改过，再改一次是幂等的（读的是队列里的最新版）。
-        extra = _fix_extra_timelines(tx, card, round(duration, 3))
+        extra = _fix_extra_timelines(tx, card, round(duration, 3), anim=anim_name)
         if extra:
             log.info(tr("P%s: aligned %s more Timeline bundle(s) to %ss"),
                      card, extra, round(duration, 3))

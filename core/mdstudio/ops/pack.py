@@ -164,6 +164,7 @@ def export(ctx, cards, out_path, name="my-pack", zip_it=True, kinds=None) -> Pat
 
     files = set()
     by_card = {}
+    h2lp = None
     for r in recs:
         kind = _kind(r.op)
         c = by_card.setdefault((r.card, kind), {"mrk": r.card, "kind": kind, "catalog": {}, "runfx": []})
@@ -191,12 +192,23 @@ def export(ctx, cards, out_path, name="my-pack", zip_it=True, kinds=None) -> Pat
         # 借来的视频效果 (别的卡做的 Ef9xxxx) 记录里没有 catalog, 也要带上, 不然对方没有这个文件
         names |= {lp for lp in (resolve_illust(e["effectPath"]) for e in r.runfx_added if e.get("effectPath"))
                   if _is_our_effect(lp)}
+        # 原地替换型不改任何 manifest 条目, 只改文件内容: 只看 r.catalog 会把真正写过的包
+        # 全漏掉 (#19886 实测: 导出的包里只有 SD 那一套, HD 骨架/atlas/贴图/材质一个没带,
+        # 装到别人机器上骨架对不上, 主体静止)。记录里的 modified/created 是哈希相对路径,
+        # 换成逻辑路径才能算依赖、才能写进清单让安装端落盘。
+        if r.modified or r.created:
+            if h2lp is None:
+                h2lp = {get_crc(n): n for n in cat.names()}
+            for rel in list(r.modified) + list(r.created):
+                lp = h2lp.get(str(rel).replace("\\", "/").rsplit("/", 1)[-1])
+                if lp:
+                    names.add(lp)
         for n in names:
+            files.add(n)
             deps = cat.deps(n)
             if deps is None:
                 continue
             c["catalog"][n] = deps
-            files.add(n)
             files |= set(deps)
         c["runfx"] += r.runfx_added
     entries = list(by_card.values())

@@ -1,7 +1,7 @@
 """mdstudio - Master Duel cut-in / run-effect toolkit."""
 
-__version__ = "v-1.0.1-release_202611192259"  # v-主.次.修订-release_年月日时分；打包脚本刷新时间戳，--bump=patch|minor 递增
-__build__ = "2026.11.19"                   # 打包日期；打包脚本自动写回
+__version__ = "v-1.0.1-release_202611201130"  # v-主.次.修订-release_年月日时分；打包脚本刷新时间戳，--bump=patch|minor 递增
+__build__ = "2026.11.20"                   # 打包日期；打包脚本自动写回
 
 
 def ensure_std_streams():

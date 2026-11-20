@@ -688,6 +688,10 @@ ZH: dict[str, str] = {
         "%s：这套底盘贴图页数不够，改用 %s 克隆一份。",
     "P%s: put %s low-quality file(s) back the way they were before":
         "P%s：低清（SD）那 %s 个文件已写回生成前的样子",
+    "P%s: %s used %s, switched to the standard Spine shader":
+        "P%s：%s 原来用的是 %s，已换成标准 Spine shader",
+    "P%s: %s page material(s) were effect shaders, switched to the standard one":
+        "P%s：%s 页材质原是特效 shader，已换成标准那款",
     "also rewrite the SD textures (low-quality setting). Default: follow the setting page":
         "连低清（SD）贴图一起重写。默认跟随设置页里的「低清纹理兼容」",
     "put the SD textures back the way they were before the last cut-in":

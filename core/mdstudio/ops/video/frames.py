@@ -286,11 +286,12 @@ def _crop_union(frames, crop_pad: float = 1.04) -> list:
     sx, sy = int(cx - side / 2), int(cy - side / 2)
     h, w = frames[0].shape[:2]
     out = []
-    for r in frames:
+    for i, r in enumerate(frames):
         c = np.zeros((side, side, 4), np.uint8)
         ax0, ay0, ax1, ay1 = max(sx, 0), max(sy, 0), min(sx + side, w), min(sy + side, h)
         c[ay0 - sy:ay1 - sy, ax0 - sx:ax1 - sx] = r[ay0:ay1, ax0:ax1]
         out.append(c)
+        frames[i] = None   # 原帧用完即弃：72 帧 2560² 的 RGBA 约 1.9GB，留两份就是翻倍
     return out
 
 
@@ -321,7 +322,6 @@ def opaque(frames, cell: int, full: bool) -> list:
     帧本身带透明通道时原样保留, 不会强行涂成不透明.
     """
     cv2 = _cv2()
-    out = []
     step(tr("resizing %s frame(s)"), len(frames))
     for k, f in enumerate(frames):
         tick(tr("resizing"), k + 1, len(frames))
@@ -335,8 +335,8 @@ def opaque(frames, cell: int, full: bool) -> list:
         f = _resize(f, (cw, ch))
         if f.ndim == 2 or f.shape[2] == 3:
             f = np.dstack([f, np.full(f.shape[:2], 255, np.uint8)])
-        out.append(f)
-    return out
+        frames[k] = f
+    return frames
 
 
 def has_alpha(frames) -> bool:
@@ -421,27 +421,23 @@ def sharpen(frames, cell: int, model: str = "realesr-animevideov3", scale: int =
 
 
 def fit(frames, cell: int) -> list:
-    """统一缩到 cell (长边), 保持比例"""
-    out = []
-    for f in frames:
+    """统一缩到 cell (长边), 保持比例. 逐帧原地替换, 不另建一份列表"""
+    for i, f in enumerate(frames):
         h, w = f.shape[:2]
         size = (cell, max(4, int(round(cell * h / w)))) if w >= h else (max(4, int(round(cell * w / h))), cell)
         if (w, h) != size:
-            f = _resize(f, size)
-        out.append(f)
-    return out
+            frames[i] = _resize(f, size)
+    return frames
 
 
 def fit_height(frames, cell: int) -> list:
     """高 = cell, 宽按比例 (4 的倍数, BC7). full 模式用: cell 指的是帧高"""
-    out = []
-    for f in frames:
+    for i, f in enumerate(frames):
         h, w = f.shape[:2]
         size = (max(4, int(round(cell * w / h / 4)) * 4), cell)
         if (w, h) != size:
-            f = _resize(f, size)
-        out.append(f)
-    return out
+            frames[i] = _resize(f, size)
+    return frames
 
 
 def grid(n: int, fw: int, fh: int, cols=None):
