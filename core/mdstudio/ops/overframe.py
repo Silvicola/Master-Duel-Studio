@@ -38,6 +38,7 @@ import shutil
 import struct
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from mdstudio import runtime
@@ -68,6 +69,10 @@ GATE_NAME = "of_card_asset"
 REC = 4
 # 当前版本实测的 gate bundle id（2026-10-29 更新后）。更新再变时会被动态扫描覆盖。
 GATE_KNOWN_IDS = ("99f84cce",)
+# 全量扫描时最多探多少个候选。候选是账号目录里体积 ≤40KB 的文件（实测约 1.3 万个），
+# 每个要真解一遍 bundle 才算得准，平均 8 毫秒；cap 在这里是为了不让一次缓存失配
+# 拖住界面一分多钟。真正的 gate 只有 1.3KB，按体积排在第 14 位，探 400 个已经远远够。
+GATE_SCAN_LIMIT = 400
 _GATE_CACHE = None  # (root_str, bundle_path)
 
 # 插图窗 / 灵摆插图窗（Floowan 实测值）
@@ -85,6 +90,10 @@ PENDULUM_LORE_RECT = (41, 637, 623, 334)
 
 # 主体相对插图窗的放大倍数（>1 才会跨出框线）
 OVERFLOW_SCALE = 1.38
+
+# 主体区域的写入透明度。闪卡与镜碎会按这个值判断「哪些地方不铺箔、不画框」，
+# 近全透明但仍能正常显示画面（Nexus articles/103 的实测结论）。预览不用它。
+SUBJECT_MASK_ALPHA = 4
 SUBJECT_ALPHA = 12
 
 # 边框效果：互斥单选。名字进 edits.json，所以不要随便改。
@@ -1320,43 +1329,38 @@ def gate_bundle_path(ctx) -> Path:
     root = ctx.game.root
     key = str(root)
     cache_file = runtime.data_dir() / "overframe" / "_gate_bundle.json"
-    has_cache = cache_file.is_file()
 
-    # 失效判据只有两条：缓存指的那个文件还在、里面还是登记表；且游戏本体
-    # （data.unity3d）没被更新过。
+    # 失效判据只有一条：缓存指的那个文件还在，里面还是登记表。满足就直接用，
+    # 顺手把 data.unity3d 的指纹刷新到缓存里（只当诊断信息，不再参与判断）。
     #
-    # 以前用「这个 bundle 的指纹 + 账号目录文件数」，但本工具每写一张超框都会
-    # 改写 gate、也就是往账号目录多放一个缓存文件，两条判据必然同时失配。
-    # 一次失配就是全量扫描上万个 bundle（实测 86 秒），界面上就是写完卡后
-    # 「正在刷新预览…」卡死几十秒。gate 被我们自己改写不代表它失效，写入方
-    # 还会顺手刷缓存；游戏真的换 id 时 data.unity3d 一定会变，那条留作兜底。
+    # 以前还要求 data.unity3d 的大小与 mtime 对得上，这条判据是错的：音效功能
+    # 每撤销一次就会整个重写 data.unity3d（SE 标签表打在里面），超框缓存立刻被
+    # 判失效，接着就是全量扫描上万个 bundle。2026-11-23 用户实测：测完特效复原
+    # 后进超框页，界面卡在「正在读取超框登记表」一百多秒（实测 101 秒）。
+    # gate 是账号目录里的松散覆盖文件，游戏换 id 的前提是逻辑路径变了，
+    # 「文件里还有没有登记表」这条已经能挡住认错文件的情况。
     try:
         c = json.loads(cache_file.read_text(encoding="utf-8"))
         if c.get("root") == key and c.get("id"):
             p = ctx.game.find(c["id"])
-            if p and p.is_file():
+            if p and p.is_file() and _bundle_has_gate(p):
                 up = _unity_fp(ctx)
-                if _bundle_has_gate(p) and c.get("unity") in (None, up):
-                    if c.get("unity") is None:
-                        # 旧格式缓存没有 unity 键, 补上，下次才能正常比对
-                        _write_gate_cache(cache_file, key, p, c.get("nfiles") or 0, up)
-                    _GATE_CACHE = (key, p)
-                    return p
+                if c.get("unity") != up:
+                    _write_gate_cache(cache_file, key, p, c.get("nfiles") or 0, up)
+                _GATE_CACHE = (key, p)
+                return p
     except (OSError, ValueError, KeyError, TypeError):
         pass
 
-    # 全新安装还没缓存时，用写死的 id 起步。GATE_KNOWN_IDS 是逻辑路径的 CRC，
-    # 确认这个文件里确实有登记表就够，省掉一次 86 秒的全量扫描。
-    # 只有在「从来没有缓存」时才这么干：缓存存在却失效，多半是游戏换了 id，
-    # 那必须让下面的全量扫描重新挑，不能认可能已经过期的旧文件。
-    if not has_cache:
-        for gid in GATE_KNOWN_IDS:
-            p = ctx.game.find(gid)
-            if p and p.is_file() and _gate_entries_at(p) is not None:
-                nfiles = sum(len(fns) for _, _, fns in os_walk(root))
-                _write_gate_cache(cache_file, key, p, nfiles, _unity_fp(ctx))
-                _GATE_CACHE = (key, p)
-                return p
+    # 缓存不能用（文件被删、或里面不再是登记表）时，先试写死的 id。
+    # GATE_KNOWN_IDS 是逻辑路径的 CRC，官方不改路径就一直有效；确认文件里确实
+    # 有登记表就认，比下面的全量扫描便宜三个数量级。
+    for gid in GATE_KNOWN_IDS:
+        p = ctx.game.find(gid)
+        if p and p.is_file() and _gate_entries_at(p) is not None:
+            _write_gate_cache(cache_file, key, p, 0, _unity_fp(ctx))
+            _GATE_CACHE = (key, p)
+            return p
 
     builtin = {t for t, _ in bundled_gate_records(ctx)}
 
@@ -1381,18 +1385,25 @@ def gate_bundle_path(ctx) -> Path:
     hits = []
     probe = 0
     for _, p in cands:
-        ent = _gate_entries_at(p)
-        if ent is None:
-            continue
-        hits.append((ent, p))
-        if {t for t, _ in ent} >= builtin:
-            break
         probe += 1
-        if probe >= 60:
-            # 兜底: 找不到能覆盖的(本机那份本身就是残表), 别为之一口气翻完整个目录
+        ent = _gate_entries_at(p)
+        if ent is not None:
+            hits.append((ent, p))
+            if {t for t, _ in ent} >= builtin:
+                break
+        # 兜底: 别为之一口气翻完整个目录。这里必须每个候选都计数。
+        # 旧写法只在「命中但盖不住官方表」时 ++，而本机那份表只有二十几条、
+        # 永远盖不住内置的 69 条，于是计数一直不涨，最后扫完 12908 个候选
+        # （2026-11-23 实测 101 秒）。
+        if probe >= GATE_SCAN_LIMIT:
             break
     if not hits:
         raise MDStudioError(tr("over-frame gate bundle not found under %s") % root)
+    if not any({t for t, _ in h[0]} >= builtin for h in hits):
+        # 扫到上限也没找到能盖住内置表的，多半是游戏把登记表挪了位置。
+        # 不报错（用现有那份照样能读写），但留一条日志，好排查「官方标签对不上」。
+        log.warning(tr("over-frame gate: stopped after %s probes without a bundle covering "
+                       "the built-in table, using %s"), probe, hits[0][1].name)
     # 能覆盖官方表的优先, 其次改得新(游戏写过的那份), 再次条目多
     _, p = max(hits, key=lambda h: ({t for t, _ in h[0]} >= builtin,
                                     _mtime(h[1]), len(h[0])))
@@ -1589,7 +1600,7 @@ def compose(card_id: int, art=None, subject=None,
             scale: float = 1.0, dx: int = 0, dy: int = 0,
             lore_alpha: float = 1.0, effect: str = EFFECT_PRISMATIC,
             holo_scope=None, out=None, link_markers: int = None,
-            code: int = None, ctx=None) -> Path:
+            code: int = None, ctx=None, mask_alpha: int = 0) -> Path:
     """合成一张超框卡图，返回写出的 PNG 路径。
 
     link_markers  连接方向掩码（bit0..7 = LINK_ARROWS 顺序）；None 就自动从游戏
@@ -1604,6 +1615,8 @@ def compose(card_id: int, art=None, subject=None,
                / official 官方 / keep 不改边框
     holo_scope 保留参数，已无实际作用（老调用方还在传）
     code       CARD_Prop 类型字节，决定用哪套卡框；不传就退回静态表
+    mask_alpha 主体区域的写入透明度，0 = 不做（预览用）。写入游戏时传
+               SUBJECT_MASK_ALPHA，闪卡 / 镜碎靠它判断哪里不画框、不铺箔。
     """
     nn = frame_of_card(card_id, code)
     ax, ay, aw, ah = art_box(nn)
@@ -1656,6 +1669,23 @@ def compose(card_id: int, art=None, subject=None,
     # 7) 效果框单独压到主体之上，透明度可调（1 = 完全遮住主体，边缘不被吃）
     panel = frame.crop((lx, ly, lx + lw, ly + lh))
     cv.alpha_composite(_dim(panel, lore_alpha), (lx, ly))
+
+    # 8) 写入版：把主体覆盖到的地方压成近透明。闪卡与镜碎按这个值认「这里不画框、
+    #    不铺箔」，主体就能盖住方块框、外框与卡名条那一片。效果框与点亮箭头保持
+    #    不透明，游戏照旧把它们画在主体之上。预览不传 mask_alpha，画面不受影响。
+    #
+    #    顶部不再整条压回：那一刀会把头顶削平（2026-11-23 用户实测三张卡都断在同
+    #    一条线上）。卡名文字与属性图标是否由游戏单独绘制，这里按「会让位」处理，
+    #    由实测确认——文字若跟着消失，就得改成只挖文字像素。
+    if mask_alpha and subject:
+        body = np.asarray(layer.getchannel("A")) > 8
+        allow = np.ones_like(body)
+        allow[ly:ly + lh, lx:lx + lw] = False        # 效果框留给面板
+        if lit is not None:
+            allow &= np.asarray(lit.getchannel("A")) <= 8
+        arr = np.asarray(cv).copy()
+        arr[:, :, 3][body & allow] = int(mask_alpha)
+        cv = Image.fromarray(arr)
 
     dst = Path(out) if out else _default_out(card_id, ctx)
     dst.parent.mkdir(parents=True, exist_ok=True)

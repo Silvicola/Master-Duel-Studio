@@ -19,11 +19,19 @@
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <Style
-            x:Key="GroupTitle"
+        <Style x:Key="GroupTitle"
             BasedOn="{StaticResource BodyStrongTextBlockStyle}"
             TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <!--  高级设置里的单项：白底 + 1px 描边，项与项之间靠边界分开  -->
+        <!--  内边距与「额外组件」里代码生成的卡片一致（14,10），两块并排时内容左沿才对齐  -->
+        <Style x:Key="SettingItemCard" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="14,10" />
         </Style>
         <!--  统计块：浅底色 + 小标题 + 大数字  -->
         <Style x:Key="StatTile" TargetType="Border">
@@ -412,40 +420,100 @@
                     VerticalAlignment="Top"
                     Style="{StaticResource PanelCard}">
                     <StackPanel Spacing="12">
+                        <!--
+                            与右边「额外组件」同一套：标题行 + 第一项常显 + 「还有 N 项」别在标题后面。
+                            收起时两块卡片都是「标题 + 一行」，高度自然一样（2026-11-21）。
+                        -->
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <Border Background="#2494A3B8" Style="{StaticResource GroupIconBox}">
                                 <FontIcon FontSize="14" Foreground="#64748B" Glyph="&#xE713;" />
                             </Border>
                             <TextBlock Style="{StaticResource GroupTitle}" Text="高级设置" />
+                            <Button
+                                x:Name="AdvancedMoreBtn"
+                                MinHeight="24"
+                                Padding="9,2,9,2"
+                                Background="Transparent"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                Click="AdvancedToggle_Click"
+                                FontSize="12"
+                                Visibility="Collapsed" />
                         </StackPanel>
-                        <Grid MinHeight="58" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center" Spacing="2">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="低清纹理兼容" />
+
+                        <Border MinHeight="60" Style="{StaticResource SettingItemCard}">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="低清纹理兼容" />
                                     <TextBlock
-                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        x:Name="CompatSdHint"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        MaxLines="1"
                                         Style="{StaticResource CaptionTextBlockStyle}"
-                                        Text="属于动画与特效页"
-                                        VerticalAlignment="Center" />
+                                        Text="低清贴图一并重写，关掉沿用官方"
+                                        TextTrimming="CharacterEllipsis"
+                                        TextWrapping="Wrap" />
                                 </StackPanel>
-                                <TextBlock
-                                    x:Name="CompatSdHint"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="生成召唤动画时，低清（SD）贴图也一起重写。只写单页贴图，超出上限会提示。关掉后再生成，低清那份恢复成官方；整合包里开与不开的卡混装时，只有开了的卡在低画质下生效。"
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
-                            <ToggleSwitch
-                                x:Name="CompatSdSwitch"
-                                Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Toggled="CompatSdSwitch_Toggled"
-                                ToolTipService.ToolTip="默认关：低画质档保留原样，省一次大图编码。开了低画质档也播你自己那套。关掉再生成会把低清那份写回生成前；克隆出来的卡没有官方低清资源，那份会保留上一次的内容。视频、帧文件夹与 Spine 导入两条路都按这个走。" />
-                        </Grid>
+                                <ToggleSwitch
+                                    x:Name="CompatSdSwitch"
+                                    Grid.Column="1"
+                                    MinWidth="0"
+                                    VerticalAlignment="Center"
+                                    OffContent=""
+                                    OnContent=""
+                                    Toggled="CompatSdSwitch_Toggled"
+                                    ToolTipService.ToolTip="默认关：低画质档保留原样，省一次大图编码。开了低画质档也播你自己那套。关掉再生成会把低清那份写回生成前。只影响动画与特效页的生成，视频、帧文件夹与 Spine 导入都按这个走。" />
+                            </Grid>
+                        </Border>
+
+                        <StackPanel
+                            x:Name="AdvancedRest"
+                            Spacing="8"
+                            Visibility="Collapsed">
+                            <Border MinHeight="60" Style="{StaticResource SettingItemCard}">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="预览缓存" />
+                                        <TextBlock
+                                            x:Name="PreviewCacheHint"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            MaxLines="1"
+                                            Style="{StaticResource CaptionTextBlockStyle}"
+                                            Text="动画与特效的预览帧图"
+                                            TextTrimming="CharacterEllipsis"
+                                            TextWrapping="Wrap"
+                                            ToolTipService.ToolTip="供软件内预览用的帧图，几十 MB。复原或手动清理后，这张卡的播放入口会一起消失，重新生成才有。" />
+                                    </StackPanel>
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="10">
+                                        <TextBlock
+                                            x:Name="PreviewCacheTotal"
+                                            VerticalAlignment="Center"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="0 MB" />
+                                        <Button
+                                            x:Name="PreviewCacheManageBtn"
+                                            MinWidth="56"
+                                            MinHeight="30"
+                                            Padding="12,2"
+                                            Click="PreviewCacheManage_Click"
+                                            Content="管理" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
                     </StackPanel>
                 </ContentControl>
 
@@ -484,6 +552,7 @@
                     </StackPanel>
                 </ContentControl>
             </Grid>
+
 
             <!--  关于：左边统计，右边 30 天热力  -->
             <ContentControl Padding="20" Style="{StaticResource PanelCard}">

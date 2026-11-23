@@ -24,6 +24,10 @@ public sealed class EngineClient : IAsyncDisposable
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> _pending = new();
     private int _nextId;
+    // 引擎进程没了之后，新的调用必须立刻失败。以前只在读循环结束时把当时挂着的
+    // 调用叫醒，退出之后再发起的调用会一直等，界面上表现为进度条永远转、状态条
+    // 停在「正在读取…」（2026-11-23 用户实测卡在卡图页）。
+    private volatile bool _dead;
 
     /// <summary>引擎日志。参数是 (级别, 文本)。</summary>
     public event Action<string, string>? LogReceived;
@@ -134,6 +138,7 @@ public sealed class EngineClient : IAsyncDisposable
             }
 
             // 读到头 = 引擎没了，把所有等待中的调用叫醒
+            _dead = true;
             foreach (var kv in _pending)
                 kv.Value.TrySetException(new EngineException("Exited", "引擎已退出"));
             _pending.Clear();
@@ -199,6 +204,10 @@ public sealed class EngineClient : IAsyncDisposable
     public async Task<JsonElement> CallAsync(string op, object? args = null,
         CancellationToken ct = default)
     {
+        // 引擎已经没了就别再排队：不检查的话这次调用永远等不到回应，界面卡死
+        if (_dead || _proc.HasExited)
+            throw new EngineException("Exited", "引擎已退出，请重新打开软件");
+
         var id = Interlocked.Increment(ref _nextId);
         var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;

@@ -74,6 +74,19 @@ def _kind(op):
     return None
 
 
+def _fusion_cards(ctx) -> dict:
+    """走融合召唤演出、改不了也导不走的卡（融合、超融合、召唤魔术）。
+
+    这些卡播的是召唤那一刻的通用/专属演出，不在「发动特效」体系里，
+    包带过去装上也不会播，所以导出和安装两头都拦掉。
+    """
+    try:
+        from mdstudio.core.gate import fusion_fx_cards
+        return fusion_fx_cards(ctx.game)
+    except Exception:
+        return {}
+
+
 def _illust(card) -> str:
     return OF.illust_logical(card)
 
@@ -118,6 +131,37 @@ def _is_our_effect(lp: str) -> bool:
     return bool(m) and int(m.group(1)) >= FIRST_ID
 
 
+def _dep_closure(cat, name):
+    """一条 manifest 条目的完整依赖闭包（含全部层级的依赖）。
+
+    为什么不只取一层：官方现在的依赖表是扁平的，16973 条全部满足
+    「闭包 == 自己 + 直接依赖」，所以展开一层就够用。但这是数据形态，
+    代码里没人保证它。哪天官方或者我们自己的生成流程写出分层依赖表，
+    一层展开就会静默少带文件，症状跟「有动画没主体」一样难查。
+    这里展开到不再新增为止，同时保留原有顺序：绝大多数情况闭包跟直接依赖
+    一模一样，写进 manifest 的依赖列表一个字节都不变。
+
+    依赖图里有互相指向的环（比如图集条目与参考条目互指），所以必须带
+    visited，递归写法会爆栈。
+    """
+    direct = cat.deps(name)
+    if not direct:
+        return direct
+    seen = set(direct) | {name}
+    out = list(direct)
+    todo = list(direct)
+    while todo:
+        cur = todo.pop()
+        for d in cat.deps(cur) or ():
+            # 不在 manifest 里的名字（理论上不该有）也照收，跟直接依赖一视同仁
+            if d in seen:
+                continue
+            seen.add(d)
+            out.append(d)
+            todo.append(d)
+    return out
+
+
 def _group_cards(entries):
     """导出用：把扁平的 (mrk, kind) 条目表按卡号分组，一张卡下面挂三小项。"""
     out = {}
@@ -146,11 +190,14 @@ def _ungroup_cards(meta):
     return out
 
 
-def export(ctx, cards, out_path, name="my-pack", zip_it=True, kinds=None) -> Path:
+def export(ctx, cards, out_path, name="my-pack", zip_it=True, kinds=None, notes=None) -> Path:
     """cards 是卡号列表；kinds 是 {卡号: {"cutin","runfx","art"}}。
 
     kinds 为 None 时导出这些卡的全部类型（命令行和老调用方走这条路）。
     界面按每张卡的三格勾选传入 kinds，一张卡可以只带动画不带特效。
+
+    notes 传一个 list 进来时，被跳过的卡会以 {"card","kind","why"} 追加进去，
+    给界面说明「为什么这张没进包」。
     """
     from mdstudio.core.catalog import Catalog
     cat = Catalog(ctx.game)
@@ -162,15 +209,26 @@ def export(ctx, cards, out_path, name="my-pack", zip_it=True, kinds=None) -> Pat
     if not recs:
         raise MDStudioError(tr("nothing to export for those cards"))
 
-    files = set()
+    # 融合召唤演出的卡（融合、超融合、召唤魔术）改了也不会播，导出前就剔掉，
+    # 免得收包的人装上发现没反应（2026-11-23 用户定稿：禁止导出）。
+    fusion = _fusion_cards(ctx) if any(_kind(r.op) == "runfx" for r in recs) else {}
+    special_skipped = set()
+
     by_card = {}
     h2lp = None
     for r in recs:
         kind = _kind(r.op)
-        c = by_card.setdefault((r.card, kind), {"mrk": r.card, "kind": kind, "catalog": {}, "runfx": []})
+        if kind == "runfx" and r.card in fusion:
+            if r.card not in special_skipped:
+                special_skipped.add(r.card)
+                if notes is not None:
+                    notes.append({"card": r.card, "kind": kind, "why": "fusion"})
+            continue
+        c = by_card.setdefault((r.card, kind),
+                               {"mrk": r.card, "kind": kind, "catalog": {}, "runfx": [], "files": set()})
         if kind == "art":
             # 卡图就是把这张卡的插图 bundle 换掉, manifest 里那条是游戏自己的, 不用带
-            files.add(_illust(r.card))
+            c["files"].add(_illust(r.card))
             # 分层：本机"接着调"用的背景与主体，一起打进包。装到别人机器上时
             # 成品图照旧写进游戏，这两张写进编辑状态，卡图页打开就能继续调，
             # 预览也不会再是"平图被裁进插图窗"的样子。
@@ -204,14 +262,32 @@ def export(ctx, cards, out_path, name="my-pack", zip_it=True, kinds=None) -> Pat
                 if lp:
                     names.add(lp)
         for n in names:
-            files.add(n)
-            deps = cat.deps(n)
+            c["files"].add(n)
+            deps = _dep_closure(cat, n)
             if deps is None:
                 continue
             c["catalog"][n] = deps
-            files |= set(deps)
+            c["files"] |= set(deps)
         c["runfx"] += r.runfx_added
     entries = list(by_card.values())
+
+    # 依赖不全的卡单独跳过，不让一张失效记录拖垮整包（2026-11-23）：
+    # 记录在、文件早被游戏校验或复原清掉的情况真实存在（#3900 实测）。
+    usable = []
+    for c in entries:
+        miss = [lp for lp in c.get("files") or () if not ctx.game.find_logical(lp)]
+        if miss:
+            log.warning(tr("%s %s: %s is not on disk, skipped"), c["kind"], c["mrk"], miss[0])
+            if notes is not None:
+                notes.append({"card": c["mrk"], "kind": c["kind"], "why": "missing",
+                              "detail": miss[0]})
+            continue
+        usable.append(c)
+    entries = usable
+    if not entries:
+        raise MDStudioError(tr("those cards have nothing exportable left: their files are no longer "
+                              "on disk, or the effect is a fusion summon performance"))
+    files = {lp for c in entries for lp in (c.get("files") or ())}
 
     name = _safe_name(name)
     out_dir = Path(out_path)
@@ -386,20 +462,22 @@ def _safe_runfx(tmpl_gate, mrk, e) -> dict:
     return e
 
 
-def install(ctx, pack_path, selected=None) -> list:
+def install(ctx, pack_path, selected=None, notes=None) -> list:
     """selected: [{"card": 22768, "kind": "cutin"}]，只装清单里的条目。
 
     为 None 时装全包（命令行和老调用方）。界面走预览勾选，判断在预览层做完，
     这里只管按清单执行，另外保留卡是否存在、内容合法这些兜底检查。
     统一覆盖语义（2026-11-11）：跳过已废除，选了就装、装就覆盖；skip_existing /
     replace 两个旧参数退役。
+
+    notes 传 list 进来时，被拦下的卡以 {"card","kind","why"} 追加。
     """
     with _open(pack_path) as (meta, read):
         _validate(meta)
         # 一次安装的摘要与全部明细共用一个批次号：历史页据此把 1 条摘要 +
         # N 条明细归成"一次操作"，而不是画成 N+1 件独立的事。
         batch = uuid.uuid4().hex[:12]
-        done, overwritten = _install(ctx, meta, read, batch, selected=selected)
+        done, overwritten = _install(ctx, meta, read, batch, selected=selected, notes=notes)
         # 装上的卡各自有记录(可撤销), 这里再留一条带数量的摘要:
         # 一张没装上时它就是唯一线索; 装上了也能一眼看到"这次装了几张".
         # installed 存明细, 分享页据此做「恢复原版」。
@@ -424,7 +502,7 @@ def install(ctx, pack_path, selected=None) -> list:
         return done, overwritten
 
 
-def _install(ctx, meta, read, batch, selected=None):
+def _install(ctx, meta, read, batch, selected=None, notes=None):
     """统一覆盖语义：跳过逻辑已废除（2026-11-11 用户决定），选了就装、装就覆盖。
     skip_existing / replace 两个旧参数随之退役。batch 用于历史页归组。"""
     want = None
@@ -436,6 +514,7 @@ def _install(ctx, meta, read, batch, selected=None):
             except (KeyError, TypeError, ValueError):
                 continue
 
+    fusion = _fusion_cards(ctx)
     done = []
     overwritten = 0   # 覆盖了"安装前本工具已做过的改动"的条目数，安装完提示用
     for c in _ungroup_cards(meta):
@@ -452,6 +531,12 @@ def _install(ctx, meta, read, batch, selected=None):
             continue
         # 统一覆盖：不跳过任何"已装过同类"的条目。装 = 覆盖，之前的版本由
         # 记录备份保管，撤销链随时找回（2026-11-11 用户决定废除跳过语义）。
+        if kind == "runfx" and mrk in fusion:
+            # 融合演出的卡装了也不播，直接拒（2026-11-23 用户定稿）
+            log.warning(tr("effect %s: fusion summon performance, skipped"), mrk)
+            if notes is not None:
+                notes.append({"card": mrk, "kind": kind, "why": "fusion"})
+            continue
         if kind == "art":
             if ctx.journal.for_card(mrk, ART_OPS):
                 overwritten += 1
@@ -495,8 +580,15 @@ def _install(ctx, meta, read, batch, selected=None):
                 log.warning(tr("effect %s: needs %s, not on this machine (open that card once in game), "
                                "skipped"), mrk, lost[0])
                 continue
-            if tx.runfx_gate.for_card(mrk):
-                tx.drop_runfx_card(mrk)
+            # 只替换「自己那侧」。对手侧（player=1）是这张卡在对手场上发动时用的，
+            # 生成侧 2026-11-22 起就保留它，安装侧以前整卡删掉，装个包会把对手那条
+            # 弄没（全库 13 张卡有这种条目）。包里自带对手侧时才整体替换。
+            have = tx.runfx_gate.for_card(mrk)
+            pack_has_opp = any(int(e.get("player") or 2) == 1 for e in entries)
+            to_drop = [e for e in have
+                       if int(e.get("player") or 2) != 1 or pack_has_opp]
+            if to_drop:
+                tx.drop_runfx_entries(to_drop)
             tx.add_runfx(entries)
         tx.rec.meta = {"pack": meta.get("name"), "batch": batch}
         tx.commit()

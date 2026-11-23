@@ -204,8 +204,8 @@ ZH: dict[str, str] = {
     "video, gif or frame folder (drag it in)": "视频、GIF 或帧文件夹（拖进来）",
     "px per frame (height for full)": "每帧像素（全屏时是高度）",
     "seconds (the cut-in Timeline is stretched to fit)": "秒（召唤动画时间轴会拉伸适配）",
-    "skeleton width: full default 4800 = fills a 16:9 screen; others 2930 (peak ~110% of the screen height at 1440p)":
-        "骨架宽度：全屏默认 4800 铺满 16:9；其他 2930（1440p 下峰值约占 110% 屏高）",
+    "skeleton width: full default 4800 = fills a 16:9 screen; others 2880 (the character is exactly one screen tall)":
+        "骨架宽度：全屏默认 4800 铺满 16:9；其他 2880（角色高度正好一屏）",
     "full = whole video as is, nothing cut (default); matte = AI cut-out of the character":
         "full = 整段视频原样，不裁切（默认）；matte = AI 抠出角色",
     "Real-ESRGAN (needs MDSTUDIO_ESRGAN)": "Real-ESRGAN 锐化（需要 MDSTUDIO_ESRGAN）",
@@ -538,8 +538,8 @@ ZH: dict[str, str] = {
     "From a video / GIF / frame folder": "从视频 / GIF / 帧文件夹",
     "Video": "视频",
     "Video (*.mp4 *.webm *.mov *.gif);;All (*)": "视频 (*.mp4 *.webm *.mov *.gif);;全部 (*)",
-    "4800 = fills a 16:9 screen. 2930 = the peak fills 110% of the screen height":
-        "4800 = 铺满 16:9 屏幕。2930 = 峰值约占 110% 屏高",
+    "4800 = fills a 16:9 screen. 2880 = the character is exactly one screen tall":
+        "4800 = 铺满 16:9 屏幕。2880 = 角色高度正好一屏",
     "Konami pop-in zoom": "K 社弹出缩放",
     "Sharpen (Real-ESRGAN)": "锐化（Real-ESRGAN）",
     "Source": "来源",
@@ -688,6 +688,10 @@ ZH: dict[str, str] = {
         "%s：这套底盘贴图页数不够，改用 %s 克隆一份。",
     "P%s: put %s low-quality file(s) back the way they were before":
         "P%s：低清（SD）那 %s 个文件已写回生成前的样子",
+    "P%s: wrote %s preview frame(s) for the in-app player":
+        "P%s：已存 %s 帧预览图，供软件内预览用",
+    "P%s: could not write the preview frames (%s)":
+        "P%s：预览帧没写成（%s），不影响这次生成",
     "P%s: %s used %s, switched to the standard Spine shader":
         "P%s：%s 原来用的是 %s，已换成标准 Spine shader",
     "P%s: %s page material(s) were effect shaders, switched to the standard one":
@@ -789,6 +793,7 @@ ZH: dict[str, str] = {
     "building the sheet": "拼序列帧",
     "%s frames at %spx don't fit one texture page (low-quality compat writes a single page). Lower the size per frame or reduce the count.": "%s 帧按每帧 %s 像素放不进一页贴图（低清兼容只写一页），请调小像素/帧或减少帧数",
     "%s frames at %spx need more than two texture pages. Lower the size per frame or reduce the frame count.": "%s 帧按每帧 %s 像素需要超过两页贴图，请调小像素/帧或减少帧数",
+    "%s frames at %spx need more than %s texture page(s). Lower the size per frame or reduce the frame count.": "%s 帧按每帧 %s 像素需要超过 %s 页贴图，请调小像素/帧或减少帧数",
     "%s frames at %spx need about %s GB of memory. Reduce the frame count or the size per frame.": "%s 帧按每帧 %s 像素大约要 %s GB 内存，请减少帧数或调小像素/帧",
     "the source has only %s frame(s) but %s were requested. Lower the frame count or use a longer clip.": "素材只有 %s 帧，但要生成 %s 帧，请减少帧数或换更长的素材",
     "can't find the video particle in the bundle": "在 bundle 里找不到视频粒子",
@@ -959,10 +964,10 @@ ZH: dict[str, str] = {
         "整体上下移动，正数向上。单位是帧图像的像素。",
     "Overall zoom multiplied onto the pop curve. 1 = as generated.":
         "整体放大倍率，乘在弹出曲线上。1 = 按生成的尺寸。",
-    "shift the cut-in sideways, in frame pixels (positive = right)":
-        "整体左右移动，单位是帧图像素（正数向右）",
-    "shift the cut-in up/down, in frame pixels (positive = up)":
-        "整体上下移动，单位是帧图像素（正数向上）",
+    "shift sideways, in character heights (1 = one character height, positive = right)":
+        "整体左右移动，单位是角色高度（1 = 一个角色高度，正数向右）",
+    "shift up/down, in character heights (1 = one character height, positive = up)":
+        "整体上下移动，单位是角色高度（1 = 一个角色高度，正数向上）",
     "overall zoom multiplier (1 = as generated)": "整体放大倍率（1 = 按生成的尺寸）",
     "One group per keyframe: frame,scale,opacity in percent, separated by <. Example: 0,10,10<8,70,50. Blank = the built-in curve.":
         "每组一个关键帧：帧,缩放,透明度（百分比），组之间用 < 隔开，例如 0,10,10<8,70,50；留空用内置的官方曲线。",
@@ -1137,6 +1142,9 @@ ZH: dict[str, str] = {
     "no texture in %s": "%s 里没有贴图",
     "no texture in the artwork bundle": "卡图 bundle 里没有贴图",
     "over-frame gate bundle not found under %s": "在 %s 下找不到超框登记表 bundle",
+    "over-frame gate: stopped after %s probes without a bundle covering "
+    "the built-in table, using %s":
+        "超框登记表：探了 %s 个 bundle 仍未找到能覆盖内置表的那份，改用 %s",
     "card art %s: re-registered as over-frame": "卡图 %s：已重新登记为超框",
     "card art registration not restored: %s": "卡图登记没能补回：%s",
     "over-frame table: restored %s official entries": "超框登记表：补回 %s 条官方条目",

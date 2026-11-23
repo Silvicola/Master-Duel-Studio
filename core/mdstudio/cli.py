@@ -673,7 +673,7 @@ def _add_cutin_video_args(x):
     x.add_argument("--cell", type=int, default=1080, help=tr("px per frame (height for full)"))
     x.add_argument("--duration", type=float, default=4.8, help=tr("seconds (the cut-in Timeline is stretched to fit)"))
     x.add_argument("--size", type=int, help=tr("skeleton width: full default 4800 = fills a 16:9 screen; "
-                                               "others 2930 (peak ~110% of the screen height at 1440p)"))
+                                               "others 2880 (the character is exactly one screen tall)"))
     x.add_argument("--mode", choices=("auto", "full", "square", "matte"), default="auto",
                    help=tr("auto (default) = keep frames that already have transparency, remove a "
                            "detected backdrop, otherwise use the whole frame; full/square/matte force "
@@ -685,9 +685,9 @@ def _add_cutin_video_args(x):
                    help=tr("custom pop keyframes: frame,scale,opacity in percent, "
                            "e.g. \"(0,10,10)(8,70,50)(16,110,100)\""))
     x.add_argument("--offset-x", type=float, default=0.0,
-                   help=tr("shift the cut-in sideways, in frame pixels (positive = right)"))
+                   help=tr("shift sideways, in character heights (1 = one character height, positive = right)"))
     x.add_argument("--offset-y", type=float, default=0.0,
-                   help=tr("shift the cut-in up/down, in frame pixels (positive = up)"))
+                   help=tr("shift up/down, in character heights (1 = one character height, positive = up)"))
     x.add_argument("--zoom", type=float, default=1.0,
                    help=tr("overall zoom multiplier (1 = as generated)"))
     x.add_argument("--rotate", type=float, default=0.0,

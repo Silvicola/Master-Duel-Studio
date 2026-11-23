@@ -36,18 +36,6 @@ public sealed class HistoryItem : INotifyPropertyChanged
     /// <summary>右侧第二行：改动文件数等。</summary>
     public string Detail2 { get; init; } = "";
 
-    /// <summary>同卡同族被折叠了几次生成。1 表示没有折叠。</summary>
-    public int Count { get; init; } = 1;
-
-    /// <summary>胶囊上的次数文字，只在 2 次以上显示。</summary>
-    public string CountText => $"×{Count}";
-    public Visibility CountVisibility => Count > 1 && !IsUndo ? Visibility.Visible : Visibility.Collapsed;
-
-    /// <summary>胶囊跟类别成套：浅底 HistBadge*、深字 HistText*、描边 HistBar*。</summary>
-    public Brush CountPillBrush => CategoryBadgeBrush;
-    public Brush CountPillTextBrush => CategoryTextBrush;
-    public Brush CountPillBorderBrush => CategoryBrush;
-
     /// <summary>导出这类不改游戏文件的记录。</summary>
     public bool ReadOnly { get; init; }
 
@@ -73,7 +61,9 @@ public sealed class HistoryItem : INotifyPropertyChanged
     private static string KeyOf(string category) => category switch
     {
         "动画" => "Anim",
-        "特效" => "Fx",
+        // 历史页的类别徽章文字是「卡牌特效」，不是「特效」；以前这里只认后者，
+        // 落到了默认的灰色，跟「复原」撞色（2026-11-23 用户实测）。
+        "卡牌特效" or "特效" => "Fx",
         "超框卡图" => "Art",
         _ => "Other",
     };

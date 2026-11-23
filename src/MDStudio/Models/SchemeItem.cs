@@ -9,7 +9,7 @@ public sealed class SchemeItem
     public int Frames { get; set; } = 72;
     public int Cell { get; set; } = 1664;
     public double Dur { get; set; } = 1.6;
-    public int Size { get; set; } = 2930;
+    public int Size { get; set; } = 2880;
     public int OffX { get; set; }
     public int OffY { get; set; }
     public int Rot { get; set; }

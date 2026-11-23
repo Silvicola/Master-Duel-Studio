@@ -25,7 +25,7 @@ from mdstudio.i18n import tr
 
 log = logging.getLogger("mdstudio")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 INDEX_FILE = "cards_index.json"
 WARN_FILE = "carddata_warnings.log"
 SEMANTICS_FILE = "tools/cards/subtype_semantics.json"
@@ -61,6 +61,21 @@ def semantics() -> dict:
             log.warning(tr("card type semantics unavailable: %s"), p)
             _SEMANTICS = {"subtypes": {}, "frame_png_map": {}, "coarse_names": {}}
     return _SEMANTICS
+
+
+def magic_subtype(code: int, stype) -> str:
+    """魔法/陷阱再细分一层：通常、场地、装备、永续、速攻、仪式。
+
+    `stype` 是卡属性 bits 50-52（见 Nexus modding guide 的位定义表），陷阱只有
+    0 通常 / 1 反击 / 4 永续。表外或缺失返回空串，调用方回退到「魔法卡／陷阱卡」。
+    只给标题行用，不参与筛选。
+    """
+    if stype is None:
+        return ""
+    key = "spell_subtypes" if code == 13 else "trap_subtypes" if code == 14 else ""
+    if not key:
+        return ""
+    return (semantics().get(key) or {}).get(str(int(stype)), "")
 
 
 def frame_png_for(code: int):
@@ -526,7 +541,8 @@ class CardIndex:
                 "frame_type": ent.get("frame_type") if ent else None,
                 "coarse": ent.get("coarse") if ent else None,
                 "coarse_cn": ent.get("coarse_cn") if ent else None,
-                "subtype_cn": ent.get("cn") if ent else None,
+                "subtype_cn": magic_subtype(effective, ((v >> 50) & 0x7) if v is not None else None)
+                or (ent.get("cn") if ent else None),
                 "abilities": ent.get("abilities", []) if ent else [],
                 "unknown_subtype": effective is not None and ent is None,
                 "frame_inferred": sub is None and inferred is not None,

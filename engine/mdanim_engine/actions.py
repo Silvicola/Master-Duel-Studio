@@ -58,7 +58,8 @@ def missing_assets(kind, source=None, sharp=False):
     return found
 
 
-def cutin_precheck(kind="cutin.video", source=None, n=0, cell=0, compat_sd=None, sharp=False):
+def cutin_precheck(kind="cutin.video", source=None, n=0, cell=0, compat_sd=None, sharp=False,
+                   max_pages=2):
     """生成前一次问清三件事：缺哪些组件、素材够不够帧、按参数要几页。
 
     优先级跟界面提示一致：组件 > 素材帧数 > 页数，只回第一条挡路的原因。
@@ -101,18 +102,13 @@ def cutin_precheck(kind="cutin.video", source=None, n=0, cell=0, compat_sd=None,
     per_page = (F.MAX_TEX // cell) ** 2
     pages = -(-n // per_page)
     out["pages"] = pages
-    if pages > 1 and compat_sd:
+    # 低清兼容只写一页；特效页的底盘本来就只有一页材质槽，走同一条限制
+    limit = 1 if compat_sd else int(max_pages or 2)
+    if pages > limit:
         out["block"] = {
             "why": "pages",
-            "message": tr("%s frames at %spx don't fit one texture page (low-quality compat "
-                          "writes a single page). Lower the size per frame or reduce the count.")
-                       % (n, cell),
-        }
-    elif pages > 2:
-        out["block"] = {
-            "why": "pages",
-            "message": tr("%s frames at %spx need more than two texture pages. Lower the size per "
-                          "frame or reduce the frame count.") % (n, cell),
+            "message": tr("%s frames at %spx need more than %s texture page(s). Lower the size per "
+                          "frame or reduce the frame count.") % (n, cell, limit),
         }
     return out
 
@@ -202,18 +198,20 @@ def _pack_export(ctx, cards, out_path, name="my-pack", zip_it=True, kinds=None):
     from mdstudio.ops import pack as P
     # kinds: {卡号: ["cutin","runfx","art"]}，界面按每张卡的勾选传入；
     # 键过 JSON 会变字符串，P.export 里统一 int(k) 转回。
-    final = P.export(ctx, cards, out_path, name=name, zip_it=zip_it, kinds=kinds)
-    # Path 不能直接进协议, 回个能读的摘要
-    return {"path": str(final), "name": name}
+    notes = []
+    final = P.export(ctx, cards, out_path, name=name, zip_it=zip_it, kinds=kinds, notes=notes)
+    # Path 不能直接进协议, 回个能读的摘要。skipped 是被拦下的卡（融合演出、依赖缺失）
+    return {"path": str(final), "name": name, "skipped": notes}
 
 
 @register("pack.install")
 def _pack_install(ctx, pack_path, selected=None):
     from mdstudio.ops import pack as P
     # 统一覆盖语义（2026-11-11）：跳过已废除，skip_existing/replace 退役
-    done, overwritten = P.install(ctx, pack_path, selected=selected)
+    notes = []
+    done, overwritten = P.install(ctx, pack_path, selected=selected, notes=notes)
     return {"installed": [{"kind": k, "card": m} for k, m in done],
-            "overwritten": overwritten}
+            "overwritten": overwritten, "skipped": notes}
 
 
 @register("history.undo")
@@ -300,10 +298,13 @@ def _of_apply(ctx, card, art=None, subject=None, scale=1.0, dx=0, dy=0,
         art = str(OF.base_art(ctx, int(card), code))
     out = None
     if preview_dir:
-        out = str(Path(preview_dir) / f"{int(card)}.png")
+        # 写盘用单独的文件名：预览那份（<卡>.png）是不带遮罩的，别让写盘版把它盖掉，
+        # 否则界面再读同一路径，主体会变成近透明。
+        out = str(Path(preview_dir) / f"{int(card)}_write.png")
     img_path = OF.compose(int(card), art=art, subject=subject,
                           scale=scale, dx=dx, dy=dy, lore_alpha=lore_alpha,
-                          effect=effect, out=out, code=code, ctx=ctx)
+                          effect=effect, out=out, code=code, ctx=ctx,
+                          mask_alpha=OF.SUBJECT_MASK_ALPHA)
     with Image.open(img_path) as im:
         data = OF.apply(ctx, int(card), im.convert("RGBA"))
 

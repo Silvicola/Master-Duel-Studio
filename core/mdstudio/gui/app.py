@@ -929,7 +929,7 @@ class Main(MicaWindow):
         self.cv_size = QSpinBox()
         self.cv_size.setRange(500, 8000)
         self.cv_size.setValue(4800)
-        self.cv_size.setToolTip(tr("4800 = fills a 16:9 screen. 2930 = the peak fills 110% of the screen height"))
+        self.cv_size.setToolTip(tr("4800 = fills a 16:9 screen. 2880 = the character is exactly one screen tall"))
         # 整体位移 (单位是帧图像素, 正向: X 向右 / Y 向上) 和整体倍率
         self.cv_offx = QSpinBox()
         self.cv_offx.setRange(-3000, 3000)

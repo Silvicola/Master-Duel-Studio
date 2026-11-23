@@ -158,30 +158,31 @@ def _conform(e: dict, tmpl) -> dict:
 
 
 def fusion_fx_cards(game) -> dict:
-    """{卡号: 游戏内备注} —— 只有融合召唤演出、没有别的可发动效果的卡。
+    """{卡号: 备注} —— 播的是融合召唤演出、没有可改发动特效的卡。
 
-    这些卡播的是**融合召唤那一刻的通用演出**，不是「发动特效」，所以它们改不了
-    发动特效（改了也不会播）。目前是超融合两张（本体 + 超框）。
+    两类来源：
 
-    注意两件事：
+    1. 游戏表 `FusionEffectSetting` 里绑了卡号的条目（超融合 #7445 / #22812）。
+       读表，官方以后加新的专用演出卡会自动跟上。
 
-    1. 读的是游戏自己的表（FusionEffectSetting），没有硬编码「哪些卡有融合演出」：
-       以后官方再加一张专用融合演出卡，这里自动跟上。
+    2. 表里那条 `mrk = 0` 的通用「融合」演出。它不绑卡号，但「融合」这张魔法卡的
+       三个版本（#4837 普通 / #20386 异画 / #23490 浮世绘）发动时播的就是它，
+       游戏也不把它们算作有发动特效。这层关系在数据里跟卡号没有连接，只能人工列出。
 
-    2. **在表里不等于不能改**。召唤魔术（12852 / 3432）也在这张表里，但它还有第二段
-       正常发动的效果，那一段是可以加特效的，所以不能锁。这种「有没有第二段效果」
-       的信息不随包下发（本地没有 CARD_Text），只能人工记在下面这个集合里。
-       漏锁的代价只是多一个无效操作，误锁会让用户改不了本该能改的卡，所以宁可漏。
+    表里绑了卡号的都锁。曾经把召唤魔术（#12852 / #3432）排除在外，因为游戏把它算作
+    「有特效」；2026-11-23 用户实测给它生成发动特效后游戏不播，说明它那段也是融合
+    演出，跟「发动特效」不是一套，所以一并锁上。
     """
-    other_effects = {12852, 3432}        # 召唤魔术（含异画）：另有可发动效果，不锁
+    typical_fusion = {4837: "融合", 20386: "融合", 23490: "融合"}
+    out = dict(typical_fusion)
 
     path = game.find_logical(FUSION_FX_GATE)
     if not path:
-        return {}
+        return out
     try:
         env = UnityPy.load(path.read_bytes())
     except Exception:
-        return {}
+        return out
     for o in env.objects:
         if o.type.name != "MonoBehaviour":
             continue
@@ -192,10 +193,9 @@ def fusion_fx_cards(game) -> dict:
         infos = tt.get("fusionEffectInfos")
         if not isinstance(infos, list):
             continue
-        out = {}
         for e in infos:
             mrk = e.get("mrk") or 0
-            if mrk and int(mrk) not in other_effects:
+            if mrk:
                 out[int(mrk)] = (e.get("comment") or "").strip()
         return out
-    return {}
+    return out

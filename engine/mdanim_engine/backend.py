@@ -2,6 +2,7 @@
 
 复用 mdstudio 包, 这里只做两件事: 缓存重的查询, 把字段裁成 UI 要的形状.
 """
+import json
 import os
 import threading
 from pathlib import Path
@@ -49,126 +50,63 @@ def _kind_order(kinds) -> list:
     return want + [k for k in sorted(set(kinds)) if k and k not in want]
 
 
-# 哪些 op 是同一类改动。基线层用同一套族名（core/baseline.py 的 family_for），
-# 但历史页这里要额外把音效并进特效：一次「生成视频特效」会同时写一条
-# runfx.video 和一条 sound.inject，用户关心的是一次生成，不该看到两行。
-_PACK_DETAIL_OPS = ("pack.cutin", "pack.runfx", "pack.art")
-# undo 是复原留痕（tx.undo 撤完按卡补写的只读记录），单独一行，不参与折叠
-_NO_FOLD_OPS = ("pack.install", "pack.export", "undo")
+CUTIN_BORROW_FILE = "tools/cards/cutin_borrow.json"
+_BORROW = None
 
 
-def fold_history(rows: list) -> list:
-    """把同卡同族的多条记录折成一行（2026-11-13 用户定稿）。
+def _cutin_borrow_list() -> dict:
+    """官方逐张决定的「借谁的动画」，随包发布。
 
-    `rows` 是 history_list() 已经倒好序（新的在前）的列表，每条要带 op/card/batch。
-    放开重复生成之后，一张卡调过五次参数就会留下五条「视频召唤动画」，但盘上
-    只有最后一版在跑。历史页的作用是「改过什么、能不能复原」，不是版本列表，
-    所以合成一行并显示次数，展开看每次时间。
-
-    三条不能折的：
-    - pack.install / pack.export：摘要行，C# 的 CollectChildren 靠 batch 收明细
-    - pack.* 明细：它们要作为子项挂在摘要下面，折掉就挂不上了
-    - sound.inject：并进同卡的特效行；没有特效行时自己单独留一行
-
-    第四条（2026-11-13 补充）：同卡同族已经有包明细时，用户自己后来的改动
-    也不再输出独立行，而是把次数记到那条明细的 `own_count` 上。否则同一张卡
-    会在历史里出现两次（一次是包分组的子项，一次是独立行），两行都写「动画」。
-    没有包明细的卡照旧折成一行带 `count`。两套规则按「这张卡这一族有没有包明细」
-    分流，互不干扰。
-
-    复原按钮按「卡 + 族」整批撤，所以折叠后的 id 用最新那条即可。
+    键是借的卡号，值是出借的卡号。这类关系不在任何游戏表里：同名表只说明两张是
+    同一张卡，不说明共用动画（#22187 与 #23493 的登记与资源形态完全一样，结果相反）。
+    游戏出新卡后这份名单不会自动跟上，得人工补。
     """
-    out, seen = [], {}
-    # 每张卡每一族最新的那条包明细。一次安装每条明细只写一次，但同一个包被
-    # 重复安装、或装了两个包时会有多条，次数挂到最新的那条上。
-    pack_detail = {}
-    for row in rows:
-        if row.get("op") in _PACK_DETAIL_OPS and row.get("card"):
-            key = (row["card"], _hist_family(row["op"]))
-            cur = pack_detail.get(key)
-            if cur is None or row.get("_time", 0) > cur.get("_time", 0):
-                pack_detail[key] = row
-    # 用户后来自己改过几次：只数比该族包明细更晚的非 pack 记录。
-    # 包装的那次已经由父项「装了 N 张」表达，不再算进去。
-    own_count = {}
-    for row in rows:
-        if not row.get("card"):
-            continue
-        op = row.get("op") or ""
-        if op in _PACK_DETAIL_OPS or op in _NO_FOLD_OPS:
-            continue
-        key = (row["card"], _hist_family(op))
-        head = pack_detail.get(key)
-        if head is not None and row.get("_time", 0) > head.get("_time", 0):
-            own_count[key] = own_count.get(key, 0) + 1
+    global _BORROW
+    if _BORROW is None:
+        p = runtime.bundle_root() / CUTIN_BORROW_FILE
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            _BORROW = {int(k): int(v) for k, v in raw.items()
+                       if str(k).isdigit() and str(v).isdigit()}
+        except (OSError, ValueError):
+            _BORROW = {}
+    return _BORROW
 
-    sounds = []
-    for row in rows:
-        op = row.get("op") or ""
-        if op == "sound.inject" and row.get("card"):
-            # 这张卡的特效行已经并进包明细了，音效也不单独出现
-            if (row["card"], "runfx") in pack_detail:
-                continue
-            sounds.append(row)
-            continue
-        row = dict(row)
-        if op in _PACK_DETAIL_OPS:
-            key = (row.get("card"), _hist_family(op))
-            n = 0
-            if pack_detail.get(key) is not None and pack_detail[key]["id"] == row["id"]:
-                n = own_count.get(key, 0)
-            row["own_count"] = n
-            row["covered"] = n > 0
-            out.append(row)
-            continue
-        if op in _NO_FOLD_OPS or not row.get("card"):
-            row["covered"] = False
-            out.append(row)
-            continue
-        key = (row["card"], _hist_family(op))
-        head = pack_detail.get(key)
-        if head is not None and row.get("_time", 0) > head.get("_time", 0):
-            # 装包之后用户自己改的 → 次数已经算进子项，这里不另起独立行
-            continue
-        # 装包之前用户自己改的 → 那是「被包覆盖」，仍要单独留一行
-        if key in seen:
-            head = seen[key]
-            head["count"] = head.get("count", 1) + 1
-            head.setdefault("revisions", []).append(
-                {"time": row.get("time", ""), "op": op})
-            continue
-        row["count"] = 1
-        row["revisions"] = [{"time": row.get("time", ""), "op": op}]
-        row["covered"] = False
-        seen[key] = row
-        out.append(row)
 
-    for s in sounds:
-        key = (s["card"], "runfx")
-        head = seen.get(key)
-        if head is None:
-            s = dict(s)
-            s["count"] = 1
-            s["revisions"] = [{"time": s.get("time", ""), "op": s.get("op")}]
-            s["covered"] = False
-            out.append(s)
-        else:
-            # 音效不额外占一次「生成次数」，但要让展开里看得见换过声音
-            head.setdefault("revisions", []).append(
-                {"time": s.get("time", ""), "op": "sound.inject"})
-    # 内部字段不进 RPC 结果；音效并到特效行之后，位置跟着那行走
-    for row in out:
-        row.pop("_time", None)
+def _fx_borrow_auto(with_entry, owners, same_of) -> dict:
+    """异画借用特效：自己没有 Ef 资源，同名同描述的另一张有。
+
+    判据只用两个事实：卡在不在条目表里、磁盘上有没有 `Ef<卡号>/` 那套资源。
+    有资源的播自己的，没资源的只能播别人的——不需要名单，也不需要看 effectPath
+    里写了什么（那字段空着的时候反而多数是「用自己那套」，见 #4343 雷击）。
+
+    #21235 闪电风暴是个要小心的例子：effectPath 空、但目录里有
+    `Ef21235/Ef21235_near` 这些文件，所以它在 owners 里，不会被判成借用。
+    """
+    out = {}
+    for cid in with_entry:
+        if cid in owners:
+            continue
+        for other in same_of(cid):
+            if other != cid and other in with_entry and other in owners:
+                out[cid] = other
+                break
     return out
 
 
-def _hist_family(op: str) -> str:
-    """历史页的族名。与基线层一致，但音效归到特效，方便并进同一行。"""
-    a, _, b = (op or "").partition(".")
-    fam = b if a == "pack" else a
-    if fam == "art":
-        fam = "overframe"
-    return "runfx" if fam == "sound" else fam
+def _borrow_filter(pairs: dict, originally, has_anim) -> dict:
+    """从「谁借谁」的原始映射里筛出真正成立的。
+
+    三条同时满足才留下：自己原本不在登记表里、出借方原本在、出借方资源齐全。
+    """
+    out = {}
+    for cid, base in pairs.items():
+        if not base or base == cid:
+            continue
+        if originally(cid) or not originally(base) or not has_anim(base):
+            continue
+        out[int(cid)] = int(base)
+    return out
 
 
 def _pass(row: dict, cutin: str, runfx: str, kind: str = "") -> bool:
@@ -268,14 +206,24 @@ class Backend:
         self._status = None          # (cards, 借动画的, 借特效的)
         self._fusion = None          # {卡号: 备注}, 走融合召唤演出的卡
         self._fx_borrowed = None     # {卡号: 出借特效的底图}, 超框变体
+        self._borrowed = None        # {卡号: 出借动画的那张}, 超框 + 异画同族
         self._art = None             # (官方超框卡号, 本工具改过的超框卡号)
         self._lock = threading.Lock()
+        # 试听/抽轨会在 data/sound/preview 下留临时 wav，启动时清一次：
+        # 这时候没有播放器持有句柄，是唯一能安全全删的时刻
+        try:
+            from mdstudio.ops import sound as _S
+
+            _S.purge_preview_files()
+        except Exception:
+            pass
 
     def invalidate(self) -> None:
         """动作跑完之后调: 卡的状态变了, 缓存必须作废"""
         with self._lock:
             self._status = None
             self._fx_borrowed = None
+            self._borrowed = None
             self._art = None
 
     def reset(self) -> None:
@@ -286,6 +234,7 @@ class Backend:
             self._status = None
             self._fusion = None
             self._fx_borrowed = None
+            self._borrowed = None
         from mdstudio.core.cardindex import clear
         clear()
 
@@ -326,8 +275,8 @@ class Backend:
 
                 cut = dict(C.list_cards(ctx.game, ctx.journal))
                 fx = dict(R.list_cards(ctx.game, ctx.journal))
-                # 借用同名卡动画的超框变体（#22804 借 #14952）不在门禁表里，
-                # 但游戏里确实会播动画，列表要收进来，否则只能靠搜索才看得到
+                # 借同名卡动画的卡（超框变体 #22804 借 #14952、异画 #23496 借 #21054）
+                # 不在登记表里，但游戏里确实会播动画，列表要收进来，否则只能靠搜索才看得到
                 borrowed = self._borrowed_variants(ctx)
                 for cid in borrowed:
                     if cid not in cut:
@@ -388,16 +337,61 @@ class Backend:
             return "self"
         return "none"
 
+    def _ef_owners(self, ctx) -> set:
+        """{磁盘上有 `Ef<卡号>/` 那套文件的卡号}。
+
+        只要目录里有一个文件就算：官方有的卡只有 `_near` / `_far` / `Timeline`，
+        没有同名主文件（#21235 闪电风暴），按主文件名判会把它误判成「没有资源」。
+        """
+        try:
+            names = self._catalog(ctx).names()
+        except Exception:
+            return set()
+        pre = "Duel/Timeline/Card/tcg/Ef"
+        out = set()
+        for n in names:
+            if not n.startswith(pre):
+                continue
+            seg = n[len(pre):].split("/", 1)[0]
+            if len(seg) >= 5 and seg[:5].isdigit():
+                out.add(int(seg[:5]))
+        return out
+
+    def _same_name_of(self, ctx):
+        """给一个卡号，返回同名的其它版本（卡名与效果文本都一样）。
+
+        同名表里还有「相关卡」（青眼白龙 ↔ 青眼亚白龙），那些不能算一伙；
+        flag 数值也不可靠（flag=0 里两种都有），只能比对文本。
+        """
+        idx = self._index(ctx)
+
+        def f(cid: int):
+            me = idx.row(cid) or {}
+            name, desc = me.get("name"), me.get("desc")
+            if not name:
+                return ()
+            out = []
+            for other, _flag in me.get("aliases") or []:
+                him = idx.row(other) or {}
+                if him.get("name") == name and him.get("desc") == desc:
+                    out.append(int(other))
+            return out
+
+        return f
+
     def _borrowed_fx(self, ctx) -> dict:
         """{卡号: 出借特效的底图卡号}。超框变体里，底图有发动特效的那些。
 
-        两种形态都算借用，实测各有一批：
-          - 变体自己没有条目，靠底图的条目播（#22813 <- #20257）
-          - 变体有条目，但 seLabel 与 effectPath 跟底图一模一样（#22770 <- #22692、
-            #22822 <- #15409、#22823 <- #20555）
+        三条来源，全是可判定的，没有卡号名单：
+          - 超框表 + 变体自己没有条目，靠底图的条目播（#22813 <- #20257）
+          - 超框表 + 变体有条目，但 seLabel 与 effectPath 跟底图一模一样
+            （#22770 <- #22692、#22822 <- #15409、#22823 <- #20555）
+          - 异画借用：自己没有任何 `Ef<卡号>/` 资源，同名同描述的另一张有
+            （#12950 灰流丽 <- #3891、#8933 效果遮蒙者 <- #21224、#13587 屋敷童子 <- #3892）
 
-        判据全部来自游戏自己的两张表（超框登记表 + CardRunEffectSetting），
-        没有卡号清单：官方以后再加超框变体，这里自动跟上。
+        第三条为什么不用名单：这三对里，没资源的那张（12950、8933、13587）本地
+        一个文件都没有，它不可能播自己的，只可能播同名有资源那张。#21224 反过来
+        带了一整套 Ef21224，是 8933 借它，不是它借 8933。
         """
         if self._fx_borrowed is not None:
             return self._fx_borrowed
@@ -425,6 +419,11 @@ class Backend:
                     and (me.get("effectPath") or "") == (ref.get("effectPath") or ""))
             if same:
                 out[cid] = base
+        # 异画借用：自己一点 Ef 资源都没有，同名的另一张有整套，游戏就播那一套。
+        # 超框表已经判定的以表为准（setdefault），这里只补表里没有的。
+        for cid, base in _fx_borrow_auto(
+                set(by), self._ef_owners(ctx), self._same_name_of(ctx)).items():
+            out.setdefault(cid, base)
         self._fx_borrowed = out
         return out
 
@@ -449,6 +448,9 @@ class Backend:
         for r in recs:
             if r.op not in OPS or not r.runfx_removed:
                 continue
+            # 名单里写明的借用，条目的 Ef 号可能等于自己（#21224 有整套 Ef21224，
+            # 实际播 #8933），所以不能只看路径，先认名单。
+            listed = int(r.card) in self._borrowed_fx(ctx)
             shared_only = True
             for e in r.runfx_removed:
                 p = (e.get("centerEffectPath") or "") or (e.get("effectPath") or "")
@@ -456,7 +458,7 @@ class Backend:
                 if not (m and int(m.group(1)) != r.card):
                     shared_only = False
                     break
-            out[int(r.card)] = "shared" if shared_only else "official"
+            out[int(r.card)] = "shared" if (listed or shared_only) else "official"
         return out
 
     def _fx_origin(self, ctx) -> set:
@@ -498,30 +500,59 @@ class Backend:
         return self._fusion
 
     def _borrowed_variants(self, ctx) -> dict:
-        """{卡号: 提供动画的底图卡号}。官方超框变体里，底图真有动画的那些。
+        """{卡号: 提供动画的卡号}。自己没有、播的是别人那套的卡。
 
-        判据只看超框登记表（of_card_asset）+ 底图有没有 `P<底图>` 资源，不看
-        「自己现在有没有资源」。因为给这张卡克隆过动画之后，它自己就有资源了，
-        那时它仍然是「原本借底图的卡」，标签还得带标记。
+        两条来源，都是官方给定的映射，不做推断：
+
+          - 覆盖名单 `tools/cards/cutin_borrow.json`：官方逐张决定的借用，比如浮世绘
+            那批异画（#23493 借 #21371）。这类关系在同名表里看不出来：#22187 与
+            #23493 数据形态完全一样（自己无登记无资源、同名的另一张有），但前者原版
+            没有动画、后者借原版，只差官方有没有给它做这段演出。
+          - 超框表 `of_card_asset`：变体 -> 底图，方向写在表里（#23180 借 #17037）。
+
+        两条都要过同一道检查：自己原本不在 `monsterCutinTable` 里，出借方原本在表里、
+        且有 `P<号>` 资源。生成时会给没条目的卡补一条登记，所以「原本」要用 journal
+        还原（`C.official_origin` 给的是反向集合：改过但原本就有的）。
 
         魔法/陷阱类超框（#22770、#22823）的底图没有动画资源，不会落进来，
         它们只有发动特效，不该被标成「借用动画」。
         """
+        if self._borrowed is not None:
+            return self._borrowed
+        from mdstudio.core.gate import CutinGate
         from mdstudio.ops import cutin as C
         from mdstudio.ops import overframe as OF
 
-        try:
-            pairs = dict(OF.bundled_gate_records(ctx))
-        except Exception:
-            return {}
         cat = self._catalog(ctx)
-        out = {}
-        for cid, base in pairs.items():
-            cid, base = int(cid), int(base or 0)
-            if not base or base == cid:
-                continue
-            if C._has_own_anim(cat, base):
-                out[cid] = base
+        try:
+            pairs = {int(k): int(v) for k, v in dict(OF.bundled_gate_records(ctx)).items() if v}
+        except Exception:
+            pairs = {}
+        # 名单优先：同一张卡两边都写了时，以名单为准
+        pairs.update(_cutin_borrow_list())
+        try:
+            live = set(CutinGate(ctx.game).mrks())
+        except Exception:
+            live = set()
+
+        # 我们动过的卡：补过条目的那批，现在的表里算它，原本不算
+        try:
+            touched = {r.card for r in ctx.journal.load() if r.op in C.OPS}
+        except Exception:
+            touched = set()
+        try:
+            orig = C.official_origin(ctx.journal)
+        except Exception:
+            orig = live - touched
+
+        def originally(cid: int) -> bool:
+            """动手之前它就在登记表里吗。"""
+            if cid not in live:
+                return False
+            return cid in orig if cid in touched else True
+
+        out = _borrow_filter(pairs, originally, lambda c: C._has_own_anim(cat, c))
+        self._borrowed = out
         return out
 
     # ------------------------------------------------------------------ 查询
@@ -883,9 +914,10 @@ class Backend:
     def _fill_origin(self, ctx, rows) -> None:
         """给自改动画补上「这套是从哪来的」：原本官方自带 / 原本借同名卡（★）/ 原本没有。
 
-        两种「官方来源」都算：官方本来就有自己一套的；原本借同名卡通画的（超框变体）。
+        两种「官方来源」都算：官方本来就有自己一套的；原本借同族那套播放的
+        （超框变体借底图、异画借同名的另一个版本）。
         后者克隆时会给它补登记条目，靠 journal 判不出来，得用借用表兜住。
-        借用表读的是未改动的原始超框表，所以生成之后它仍然算「原本借的」。
+        借用表里超框那一支读的是未改动的原始表，所以生成之后它仍然算「原本借的」。
         """
         official = self._official_origin(ctx)
         borrowed = self._borrowed_variants(ctx)
@@ -903,8 +935,9 @@ class Backend:
     def _fill_src(self, ctx, db, rows) -> None:
         """给借动画的卡补上「借的是哪张」。
 
-        搜索结果里会冒出没进过门禁表的超框变体（搜同名卡时），它们的 cutin 是
-        None，但游戏里会播底图的动画。不补这一项，界面只能显示「无动画」。
+        搜索结果里会冒出没进过登记表的卡：超框变体，以及借同名版本的异画
+        （#23496 借 #21054）。它们的 cutin 是 None，但游戏里会播同族那套。
+        不补这一项，界面只能显示「无动画」。
         """
         todo = [r for r in rows if not r.get("src")]
         if not todo:
@@ -962,6 +995,62 @@ class Backend:
 
 
     # ------------------------------------------------------------------ 整合包分享
+    def preview_list(self, kind=None) -> list:
+        """预览缓存清单（类型、卡号、帧数、字节数、生成时间）。kind=None 列两类。"""
+        from mdstudio.ops import preview as PV
+
+        ctx = self._ctx()
+        db = self._names(ctx)
+        rows = PV.list_cards(ctx, kind)
+        for x in rows:
+            x["name"] = db.name(x["card"]) or ""
+        return rows
+
+    def preview_meta(self, card, kind="cutin") -> dict:
+        from mdstudio.ops import preview as PV
+
+        ctx = self._ctx()
+        meta = PV.read_meta(ctx, int(card), kind) or {}
+        if meta:
+            # 播放器要按 000.webp / 001.webp 自己读，得知道落在哪个目录
+            meta["dir"] = str(PV.folder_of(ctx, int(card), kind))
+            meta.setdefault("kind", kind)
+        return meta
+
+    def preview_drop(self, card, kind="cutin") -> dict:
+        from mdstudio.ops import preview as PV
+
+        return {"dropped": PV.drop(self._ctx(), int(card), kind)}
+
+    def preview_sound(self, card) -> dict:
+        """这张卡的特效现在挂着哪条音效、能不能在软件里放。
+
+        预览缓存里的 se 字段靠不住：生成特效时界面还没挑音效，音效是之后用
+        「音效」那块单独挂上去的（sound.custom / sound.inject），缓存不会跟着改。
+        所以每次打开预览现问一次，换音效、还原音效都能立刻反映。
+        """
+        from mdstudio.ops import runfx as R
+        from mdstudio.ops import sound as S
+
+        ctx = self._ctx()
+        label = ""
+        for rec in ctx.journal.for_card(int(card), R.OPS):
+            for e in rec.runfx_added or []:
+                if e.get("seLabel"):
+                    label = e["seLabel"]
+                    break
+            if label:
+                break
+
+        if not label:
+            return {"label": "", "playable": False, "reason": "none"}
+        if label in S.BUILTIN:
+            # 打包在 data.unity3d 里，fmod 解不开
+            return {"label": label, "playable": False, "reason": "builtin"}
+        if not S.on_disk(ctx.game, label):
+            return {"label": label, "playable": False, "reason": "missing"}
+        return {"label": label, "playable": True, "reason": ""}
+
     def pack_list(self) -> dict:
         """本工具加过的卡, 一眼看完, 方便挑哪些导出"""
         from mdstudio.ops import pack as P
@@ -1108,23 +1197,50 @@ class Backend:
             if r.op == "undo":
                 # 复原前那条改动照常显示：留痕里存着它的 op / 时间 / 展示字段。
                 # 先回放再放复原行，倒序之后就是「复原在上、原改动在下」。
+                # archived 现在是一张卡一份列表（每种 op 一条）；旧记录是单个 dict，
+                # 两种都要能读。
                 arch = r.meta.get("archived")
-                if isinstance(arch, dict) and arch.get("op"):
-                    show = dict(arch.get("meta") or {})
-                    show["kind"] = r.meta.get("kind") or ""
-                    emit(f"archived-{r.id}", arch["op"], r.card,
-                         arch.get("time") or r.time, show, archived=True)
+                if isinstance(arch, dict):
+                    arch = [arch]
+                if arch:
+                    covered = set()
+                    for i, a in enumerate(arch):
+                        if not (isinstance(a, dict) and a.get("op")):
+                            continue
+                        if str(a["op"]).startswith("sound."):
+                            continue       # 音效不算一条历史（2026-11-23 用户定稿）
+                        show = dict(a.get("meta") or {})
+                        show["kind"] = r.meta.get("kind") or ""
+                        emit(f"archived-{r.id}-{i}", a["op"], r.card,
+                             a.get("time") or r.time, show, archived=True)
+                        covered.add(a["op"])
+                    # 老留痕只存了一条摘要（以前一张卡只留最新那条），按 ops 把缺的
+                    # 补出来：否则「视频特效 + 音效」一起撤时历史里只剩复原行。
+                    # 音效不算一条历史，不补。缺的那条没有展示字段，文件数留空。
+                    for op in r.meta.get("ops") or []:
+                        if str(op).startswith("sound.") or op in covered:
+                            continue
+                        emit(f"archived-{r.id}-{op}", op, r.card, r.time - 1,
+                             {"kind": r.meta.get("kind") or "", "files": 0}, archived=True)
                 elif r.meta.get("ops"):
                     # 旧格式留痕（改动前生成）：只有 op 列表，没有时间与展示字段。
                     # 照样回放一条，时间取复原前一秒，老记录也能看到原改动。
+                    # 音效不算一条历史，优先挑列表里最后一个非音效的 op。
+                    ops = [o for o in r.meta["ops"] if not str(o).startswith("sound.")]
+                    if not ops:
+                        ops = list(r.meta["ops"])
                     show = {"kind": r.meta.get("kind") or "",
                             "files": r.meta.get("files") or 0}
-                    emit(f"archived-{r.id}", r.meta["ops"][-1], r.card,
+                    emit(f"archived-{r.id}", ops[-1], r.card,
                          r.time - 1, show, archived=True)
             emit(r.id, r.op, r.card, r.time, r.meta)
+        # 一次操作一行，不合并。同卡同族的多条记录只可能来自「已复原的历史」，
+        # 它们各是一次独立的操作；折叠会把「已被撤销的」和「当前生效的」揉进一行
+        #（2026-11-23 用户定稿：做什么显示什么）。
         recs.reverse()
-        folded = fold_history(recs)
-        return {"records": folded, "count": len(folded)}
+        for row in recs:
+            row.pop("_time", None)
+        return {"records": recs, "count": len(recs)}
 
     # ------------------------------------------------------------------ 音效
     def sound_slots(self) -> dict:
@@ -1610,10 +1726,11 @@ def _assets_needs(kind="", source=None, sharp=False):
     return {"missing": actions.missing_assets(kind, source, sharp)}
 
 
-def _cutin_precheck(kind="cutin.video", source=None, n=0, cell=0, compat_sd=None, sharp=False):
+def _cutin_precheck(kind="cutin.video", source=None, n=0, cell=0, compat_sd=None, sharp=False,
+                    max_pages=2):
     from . import actions
     return actions.cutin_precheck(kind=kind, source=source, n=n, cell=cell,
-                                  compat_sd=compat_sd, sharp=sharp)
+                                  compat_sd=compat_sd, sharp=sharp, max_pages=max_pages)
 
 
 QUERY = {
@@ -1649,6 +1766,11 @@ QUERY = {
     "probe.file": lambda be, path="", want="image", **kw: _probe_file(path, want),
     "settings.set": lambda be, **kw: be.settings_set(**kw),
     "pack.list": lambda be, **kw: be.pack_list(),
+    # 预览缓存只是列目录与读一个 json，不碰游戏目录，主进程直答。
+    "preview.list": lambda be, kind=None, **kw: be.preview_list(kind),
+    "preview.meta": lambda be, card=0, kind="cutin", **kw: be.preview_meta(card, kind),
+    "preview.drop": lambda be, card=0, kind="cutin", **kw: be.preview_drop(card, kind),
+    "preview.sound": lambda be, card=0, **kw: be.preview_sound(card),
     "pack.installed": lambda be, **kw: be.pack_installed(),
     "pack.inspect": lambda be, pack_path, **kw: be.pack_inspect(pack_path),
     "history.list": lambda be, **kw: be.history_list(),

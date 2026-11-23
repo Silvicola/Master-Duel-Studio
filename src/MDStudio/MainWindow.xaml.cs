@@ -1,10 +1,12 @@
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using MDStudio.Pages;
 using System.Text.Json;
 using Windows.Graphics;
+using Windows.System;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -20,6 +22,12 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+
+        // Esc 关预览、空格播放暂停。挂到根 Grid：Window 本身不是 UIElement
+        Shell.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(Shell_KeyDown), true);
+
+        // 标题条右侧跟着播放进度显示「当前帧 / 总帧」。控件是单实例，挂一次即可
+        PreviewView.FrameChanged += OnPreviewFrameChanged;
 
         // 每落到一个新页面就重查一次前置状态：账号可能刚在设置里改过，也可能刚被
         // 游戏更新弄没了。设置页先放行，那里是修问题的地方，不能挡。
@@ -233,6 +241,97 @@ public sealed partial class MainWindow : Window
                 default:
                     throw new InvalidOperationException($"Unknown navigation item tag: {item.Tag}");
             }
+        }
+    }
+
+    // ---------------------------------------------------------------- 动画预览浮层
+
+    private const double SmallPreviewWidth = 880;
+    private const double SmallPreviewHeight = 601;   // 44 标题条 + 557 播放器
+    private bool _previewOpen;
+    private int _previewFrames;
+    private double _previewSeconds;
+    private string _previewKind = "cutin";
+
+    /// <summary>
+    /// 弹出动画预览。成功返回 null，失败返回一句给用户看的提示。
+    /// 浮层挂在窗口上，所以任何页面都能叫它，切页也不会把它带走。
+    /// </summary>
+    public async Task<string?> ShowCutinPreviewAsync(int card, string title, string subtitle,
+                                                    string kind = "cutin")
+    {
+        if (App.Engine is not { } engine) return "引擎没有启动。";
+        kind = kind == "runfx" ? "runfx" : "cutin";
+        JsonElement meta;
+        try
+        {
+            meta = await engine.CallAsync("preview.meta", new { card, kind });
+        }
+        catch (Exception ex)
+        {
+            return "读取预览失败：" + ex.Message;
+        }
+        if (meta.ValueKind != JsonValueKind.Object ||
+            !meta.TryGetProperty("frames", out var framesEl) || framesEl.GetInt32() <= 0)
+            return "这张卡的预览已删除，重新生成后才有。";
+
+        int count = framesEl.GetInt32();
+        double dur = meta.TryGetProperty("duration", out var dEl) ? dEl.GetDouble() : 0;
+        _previewKind = kind;
+        PreviewTitle.Text = string.IsNullOrEmpty(title) ? $"#{card}" : title;
+        PreviewSubtitle.Text = subtitle;
+        _previewFrames = count;
+        _previewSeconds = dur;
+        PreviewMeta.Text = MetaText(1);
+        PreviewHost.Width = SmallPreviewWidth;
+        PreviewHost.Height = SmallPreviewHeight;
+        PreviewLayer.Visibility = Visibility.Visible;
+        _previewOpen = true;
+        if (await PreviewView.OpenAsync(card, kind)) return null;
+        CloseCutinPreview();
+        return "预览打不开，重新生成一次再看。";
+    }
+
+    private void OnPreviewFrameChanged(int current, int total)
+    {
+        if (!_previewOpen) return;
+        if (total > 0) _previewFrames = total;
+        PreviewMeta.Text = MetaText(current);
+    }
+
+    /// <summary>「12 / 48 帧 · 1.6 秒」。当前帧没拿到时不带帧号，只报总量。</summary>
+    private string MetaText(int current)
+    {
+        var kind = _previewKind == "runfx" ? "特效" : "动画";
+        var text = current > 0 && _previewFrames > 0
+            ? $"{kind} · {current} / {_previewFrames} 帧"
+            : $"{kind} · {_previewFrames} 帧";
+        return _previewSeconds > 0 ? $"{text} · {_previewSeconds:0.0} 秒" : text;
+    }
+
+    public void CloseCutinPreview()
+    {
+        if (!_previewOpen) return;
+        _previewOpen = false;
+        PreviewView.Close();
+        PreviewLayer.Visibility = Visibility.Collapsed;
+    }
+
+    private void PreviewClose_Click(object sender, RoutedEventArgs e) => CloseCutinPreview();
+
+    private void Shell_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (!_previewOpen) return;
+        if (e.Key == VirtualKey.Escape)
+        {
+            e.Handled = true;
+            CloseCutinPreview();
+            return;
+        }
+        if (e.Key == VirtualKey.Space)
+        {
+            e.Handled = true;
+            PreviewView.TogglePlay();
         }
     }
 }

@@ -40,6 +40,25 @@ public sealed class CardItem : INotifyPropertyChanged
     public Visibility UnreleasedVisibility =>
         Unreleased ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>
+    /// 本地有没有这张卡的预览缓存。列表加载时按 <c>preview.list</c> 一次问全，
+    /// 拿不到（接口出错）就当有，不因为一次查询失败把入口全藏了。
+    /// 两类分开记：同一张卡可以只有动画、只有特效，也可以两份都有。
+    /// </summary>
+    public bool HasCutinPreview { get; init; } = true;
+
+    public bool HasRunfxPreview { get; init; } = true;
+
+    /// <summary>
+    /// 当前模式下有东西可播才给入口。缓存只会由本机生成，所以「有缓存」本身就证明能播：
+    /// 设置页清掉某张卡的缓存、或者复原之后，入口跟着消失，省掉「预览已删除」那句提示。
+    /// </summary>
+    public Visibility PlayVisibility =>
+        (Mode == "runfx" ? HasRunfxPreview : HasCutinPreview)
+            ? Visibility.Visible : Visibility.Collapsed;
+
+    public string PlayTip => Mode == "runfx" ? "预览这段特效" : "预览这段动画";
+
     /// <summary>游戏出现了语义表里没有的 subtype，卡框没确认，不能合成也不能写入。</summary>
     public bool UnknownSubtype { get; init; }
 
@@ -304,7 +323,8 @@ public sealed class CardItem : INotifyPropertyChanged
         {
             if (_mode == value) return;
             _mode = value;
-            Notify(nameof(TagCurrent), nameof(KindCurrent), nameof(TagTipCurrent));
+            Notify(nameof(TagCurrent), nameof(KindCurrent), nameof(TagTipCurrent),
+                   nameof(PlayVisibility), nameof(PlayTip));
         }
     }
 

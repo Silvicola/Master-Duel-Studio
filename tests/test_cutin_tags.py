@@ -115,6 +115,10 @@ def _fake_cat(mrk, q, scale, pages, style="underscore"):
         def deps(self, n):
             return sorted(names - {prefab}) if n == prefab else []
 
+        def prefab_candidates(self, base, quality, mrk):
+            p = f"{base}/{quality}/P{int(mrk)}"
+            return [p] if p in names else []
+
         def names(self):
             return sorted(names)
 
@@ -162,6 +166,10 @@ def test_page_tails_ignores_same_prefixed_other_card():
 
         def deps(self, n):
             return sorted(self.names_ - {n}) if n in self.names_ else []
+
+        def prefab_candidates(self, base, quality, mrk):
+            p = f"{base}/{quality}/P{int(mrk)}"
+            return [p] if p in self.names_ else []
 
         def names(self):
             return sorted(self.names_)

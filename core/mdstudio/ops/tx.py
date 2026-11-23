@@ -375,30 +375,7 @@ def undo(ctx, records, keep_records=()):
         # 复原不该把原记录从历史里抹掉：这里同时留一份展示摘要，历史查询会把它
         # 展开成一条照常显示的改动。journal 本身仍只存「当前生效」，导出清单和
         # 安装闸门不受影响（2026-11-17 用户实测：整合包导入后复原，原记录消失）。
-        per_card: dict = {}
-        for r in records:
-            if not r.card:
-                continue
-            fam = family(r.op)
-            if fam == "sound":
-                fam = "runfx"
-            elif fam == "overframe":
-                fam = "art"
-            if fam not in ("cutin", "runfx", "art"):
-                continue
-            c = per_card.setdefault(r.card, {"kind": fam, "files": 0, "ops": [], "archived": None})
-            c["files"] += len(r.modified) + len(r.created)
-            c["ops"].append(r.op)
-            meta = r.meta or {}
-            # 同卡反复生成时只留时间最新那条，跟复原前界面上看到的保持一致。
-            if c["archived"] is None or r.time > c["archived"]["time"]:
-                show = {k: meta[k] for k in ("source", "label", "path", "kinds",
-                                             "overwritten", "donor", "pack", "batch")
-                        if k in meta}
-                sha = meta.get("sha")
-                if isinstance(sha, dict):
-                    show["files"] = len(sha)
-                c["archived"] = {"op": r.op, "time": r.time, "meta": show}
+        per_card = undo_summaries(records)
         for card, c in sorted(per_card.items()):
             rec = Record("undo", card)
             rec.meta = {"kind": c["kind"], "files": c["files"], "ops": c["ops"],
@@ -424,8 +401,27 @@ def undo(ctx, records, keep_records=()):
             alive = any(x.card == card and family_for(x.op) == fam for x in keep_records)
             if not alive:
                 ctx.journal.baselines.drop(card, fam)
+                # 动画与特效各有一份预览缓存，只删这一族对应的那份
+                if fam in ("cutin", "runfx"):
+                    drop_preview_cache(ctx, card, fam)
     # 返回「因为游戏表没清干净而被迫留下的文件数」，调用方决定要不要提示用户
     return len(stuck)
+
+
+def drop_preview_cache(ctx, card: int, kind: str = "cutin") -> None:
+    """复原后清掉这张卡对应类型的预览缓存。
+
+    卡已经回到官方状态，界面上本来就没有播放入口，留着只是一份死文件
+    （2026-11-20 定稿：复原即删）。动画与特效分开存，所以只删这一族那份。
+    特效顺带把它自己的音效试听文件也删掉（2026-11-21 用户定）。
+    """
+    from mdstudio.ops import preview as PV
+
+    PV.drop(ctx, card, kind)
+    if kind == "runfx":
+        from mdstudio.ops import sound as S
+
+        S.drop_preview_files(card)
 
 
 def _restore_overframe_gate(ctx, cards):
@@ -601,6 +597,54 @@ def family(op: str) -> str:
     """cutin.borrow / cutin.video / pack.cutin -> cutin; runfx.* / pack.runfx -> runfx; 其他原样"""
     a, _, b = op.partition(".")
     return b if a == "pack" else a
+
+
+def undo_summaries(records) -> dict:
+    """复原留痕的展示摘要：{卡号: {"kind", "files", "ops", "archived": [...]}}。
+
+    `archived` 是复原前那些改动的回放，历史页会把它们照常展开（不可再撤）。
+    每种 op 各留一条，同一种反复做只留最新那条。
+
+    音效不进 `archived`：它只是特效的配套改动，单独成行会把「生成特效」挤下去
+    （2026-11-23 用户定稿）。文件数照算在复原行里。
+    """
+    per_card: dict = {}
+    for r in records:
+        if not r.card:
+            continue
+        fam = family(r.op)
+        is_sound = fam == "sound"
+        if is_sound:
+            fam = "runfx"
+        elif fam == "overframe":
+            fam = "art"
+        if fam not in ("cutin", "runfx", "art"):
+            continue
+        c = per_card.setdefault(r.card, {"kind": fam, "files": 0, "ops": [], "archived": []})
+        c["files"] += len(r.modified) + len(r.created)
+        c["ops"].append(r.op)
+        if is_sound:
+            continue
+        meta = r.meta or {}
+        show = {k: meta[k] for k in ("source", "label", "path", "kinds",
+                                     "overwritten", "donor", "pack", "batch")
+                if k in meta}
+        sha = meta.get("sha")
+        if isinstance(sha, dict):
+            show["files"] = len(sha)
+        item = {"op": r.op, "time": r.time, "meta": show}
+        # 同一种 op 反复做只留时间最新那条，跟复原前界面上看到的一致；
+        # 不同的 op 各留一条。以前整张卡只留最新一条，于是「视频特效 + 音效」
+        # 一起撤的时候，前面的「生成特效」被后面的音效顶掉，历史里只剩复原行
+        # （2026-11-23 用户实测）。
+        slot = next((i for i, a in enumerate(c["archived"]) if a["op"] == r.op), None)
+        if slot is None:
+            c["archived"].append(item)
+        elif r.time > c["archived"][slot]["time"]:
+            c["archived"][slot] = item
+    for c in per_card.values():
+        c["archived"].sort(key=lambda a: a["time"])
+    return per_card
 
 
 def undo_ids(ctx, ids) -> list:

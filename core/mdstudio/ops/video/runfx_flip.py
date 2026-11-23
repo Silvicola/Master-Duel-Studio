@@ -2,7 +2,12 @@
 
 游戏判断效果结束 = PlayableDirector.stopped (Player.log 里 TimelineObject:OnPlayableDirectorStop).
 所以底盘必须有 PD, 且 Timeline 在同一个 bundle 里 (m_PlayableAsset.m_FileID == 0),
-外部 Timeline 拉不长, 永远卡在原长度. 全游戏只有 5 个符合, 最长的是 Ef04887 (神圣防护罩).
+外部 Timeline 拉不长, 永远卡在原长度.
+
+2026-11-22 全库扫过 (工具: tools 外的临时脚本, 结果已删): `Ef<号>/Ef<号>` 这种主包 37 个,
+都有 PD; Timeline 同包的只有 3 个 —— Ef04887 / Ef23491 / Ef4842。其中主粒子能用标准
+URP Unlit + `_BaseMap` 换图的只有 Ef04887 (神圣防护罩), 另外两个是自定义粒子 shader
+(`fxs_ParticleColorTexture_01_v14_k`) + `_Texture`, 混合模式没验过。所以底盘就它一个。
 """
 import copy
 import logging
@@ -25,12 +30,36 @@ log = logging.getLogger("mdstudio")
 CHASSIS = "Duel/Timeline/Card/tcg/Ef04887/Ef04887"
 FIRST_ID = 90001
 
+# 柔边补偿：内容框按 alpha>30 量，外面那圈淡到近乎透明的辉光不算在内，
+# 于是「填 0.5」在肉眼上看只有 0.47（2026-11-22 用 2560×1440 录像量的 47.6%）。
+# 放大 3% 让可见边界落在 0.5 附近。改这个数要同时看「硬边是否溢出」。
+VISUAL_PAD = 1.03
+
 
 def effect_path(eid: int, token=False) -> str:
     return f"Duel/Timeline/Card/{'<_CARD_ILLUST_>' if token else 'tcg'}/Ef{eid}/Ef{eid}"
 
 
 LAST_ID = 99999
+
+
+def screen_ratio_to_max_size(size_h: float, frame_w: int, content_h: int) -> float:
+    """界面「画面高度占屏高」-> m_MaxParticleSize（占屏宽）。
+
+    屏幕按 16:9。quad 高 = 宽 × 帧高/帧宽，而画面只占帧高的 content_h/帧高：
+        高 = 宽 × 帧高/帧宽 × content_h/帧高 = 宽 × content_h/帧宽
+    → 宽 = 高 × 帧宽/content_h × 屏高/屏宽。
+    整帧不透明时 content_h == 帧高，结果与旧口径完全一致（16:9 素材不受影响）。
+    """
+    if not content_h:
+        return float(size_h) * (9.0 / 16.0)
+    return float(size_h) * (9.0 / 16.0) * (frame_w / content_h)
+
+
+def size_h_to_max_size(size_h: float, frame_w: int, frame_h: int, content_h: int) -> float:
+    """界面「画面高度」-> m_MaxParticleSize。有透明留白时补一点柔边（VISUAL_PAD）。"""
+    m = screen_ratio_to_max_size(size_h, frame_w, content_h)
+    return m * VISUAL_PAD if 0 < content_h < frame_h else m
 
 
 def free_id(cat, game=None, journal=None) -> int:
@@ -269,6 +298,7 @@ DEFAULT_CARRIER = "SE_EV_EF09279_v1"
 def apply(ctx, card: int, source, n=120, cell=1080, duration=5.0, mode="full", max_size=None,
           se_label="", sharp=False, eid=None, preview_dir=None, video_audio=False,
           offset_x=0.0, offset_y=0.0, rotation=0.0,
+          offx_pct=0.0, offy_pct=0.0, size_h=None,
           sharp_model="realesr-animevideov3", sharp_scale=4):
     """video_audio=True: 把视频自带的声音塞进 se_label (借来的盘上 label, 用它的卡也跟着变)"""
     if video_audio:
@@ -280,10 +310,63 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=5.0, mode="full", m
         if not audio.has_audio(source):           # 先查, 别等几分钟图集做完才说没声音
             raise MDStudioError(tr("%s has no audio track. Untick 'use the video's own audio'.") % source)
     rec = _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp, eid, preview_dir,
-                 offset_x, offset_y, rotation, sharp_model, sharp_scale)
+                 offset_x, offset_y, rotation, sharp_model, sharp_scale, offx_pct, offy_pct, size_h)
     if video_audio:
         _video_sound(ctx, card, source, duration, se_label)
     return rec
+
+
+def _cache_preview(ctx, card: int, frames, duration: float, size: float,
+                   offx_pct: float, offy_pct: float, rotation: float, se_label: str) -> None:
+    """把这次生成的每一帧存一份，给软件内的特效预览读。
+
+    和动画那条不同：特效帧是整块贴图，屏幕上多大由「画面大小」决定（占屏高的比例），
+    位置还要记界面上的百分比偏移 —— 生成时传下去的是世界单位，离开补偿曲线就读不懂了。
+    帧数按界面参数原样存，只把长边压小一档，免得播放器一次解出几百 MB。
+    """
+    if ctx.dry_run:
+        return
+    try:
+        import json
+        import time
+        from PIL import Image
+        from mdstudio.ops import preview as PV
+
+        root = PV.folder_of(ctx, card, PV.KIND_RUNFX)
+        root.mkdir(parents=True, exist_ok=True)
+        for old in root.glob("*.webp"):
+            old.unlink()
+
+        n = len(frames)
+        limit = 900 if n <= 120 else 720 if n <= 200 else 600
+        w = h = 0
+        for i, fr in enumerate(frames):
+            im = Image.fromarray(fr, "RGBA")
+            if max(im.size) > limit:
+                k = limit / max(im.size)
+                im = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))),
+                               Image.LANCZOS)
+            im.save(root / f"{i:03d}.webp", "WEBP", quality=90, method=4)
+            w, h = im.size
+
+        meta = {
+            "kind": PV.KIND_RUNFX, "card": int(card), "frames": n,
+            "width": w, "height": h,
+            "duration": round(float(duration), 3),
+            # 画面大小就是「占屏高的比例」，预览按它还原尺寸
+            "size": round(float(size), 4),
+            "offx_pct": round(float(offx_pct or 0), 3),
+            "offy_pct": round(float(offy_pct or 0), 3),
+            "rotation": round(float(rotation or 0), 3),
+            "se": se_label or "",
+            "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        (root / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+        log.info(tr("P%s: wrote %s effect preview frame(s) for the in-app player"), card, n)
+    except Exception as e:
+        # 预览缓存写不出来不该让整次生成失败
+        log.warning(tr("P%s: could not write the effect preview frames (%s)"), card, e)
 
 
 def _video_sound(ctx, card, source, duration, label):
@@ -304,9 +387,39 @@ def _video_sound(ctx, card, source, duration, label):
         S.inject(ctx, label, wav, card=card)
 
 
+def retarget_entries(mine, template, card: int, path: str, se_label: str, duration: float) -> list:
+    """这张卡「自己那侧」的每条条目都改成指向新特效，时机原样保留。
+
+    2026-11-22 之前是删光再加一条 runTiming=0：多时机的卡（连锁发动 + 被破坏）
+    生成后只剩第一条，第二个时机静默失效。这里照抄每条条目的时机、播放方、
+    延迟与音效，只换路径。其余字段仍走 clean_entry 的安全值（卡移动那套清掉、
+    给硬超时、不锁输入），那几条是踩过坑的。
+
+    se_label 非空（命令行 --se）时统一盖掉所有条目的音效；空则沿用各自原来的，
+    这样「连锁发动」和「被破坏」可以各带各的官方音效。
+    """
+    if not mine:
+        return [R.clean_entry(template, card, path, se_label, duration, player=2)]
+    out = []
+    for e in mine:
+        # player=0 是「自己」，别写成 or 2 把 0 吃掉
+        p = e.get("player")
+        p = p if isinstance(p, int) else 2
+        n = R.clean_entry(template, card, path, se_label, duration, player=p)
+        if isinstance(e.get("runTiming"), int):
+            n["runTiming"] = e["runTiming"]
+        if isinstance(e.get("delay"), (int, float)) and "delay" in n:
+            n["delay"] = float(e["delay"])
+        if not se_label and "seLabel" in n:
+            n["seLabel"] = e.get("seLabel") or ""
+        out.append(n)
+    return out
+
+
 def _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp, eid, preview_dir,
            offset_x=0.0, offset_y=0.0, rotation=0.0,
-           sharp_model="realesr-animevideov3", sharp_scale=4):
+           sharp_model="realesr-animevideov3", sharp_scale=4,
+           offx_pct=0.0, offy_pct=0.0, size_h=None):
     """mode=full 全屏视频 (不抠图), matte = 只要角色
 
     上限: 单边 16384px. 1920x1080 一帧最多 8x15 = 120 帧 (16200 高), 5.5 秒约 22fps. 要更顺只能降分辨率.
@@ -335,6 +448,19 @@ def _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp
     frames = make_frames(source, n, cell, mode, sharp=sharp,
                          sharp_model=sharp_model, sharp_scale=sharp_scale)
     fh, fw = frames[0].shape[:2]
+    ch = fh
+    if size_h is not None:
+        # 界面填的是「画面高度占屏高的比例」；帧四周可能有透明留白（matte 模式把素材
+        # 裁成正方形），要按可见内容的包围盒换算。2026-11-22 前用的是帧高，
+        # 1080² 帧里只有 790 是画面，于是填 0.5 实际只画到屏高的 37%。
+        cw, ch = F.content_box(frames)
+        if not ch:
+            ch = fh
+        max_size = size_h_to_max_size(size_h, fw, fh, ch)
+    elif max_size is None:
+        max_size = 1.08 if mode == "full" else 0.5
+    # 放在 pack 之前：pack 边拼边把 frames[i] 置 None 释放内存
+    _cache_preview(ctx, card, frames, duration, max_size, offx_pct, offy_pct, rotation, se_label)
     # 1080p 一帧 1920 宽, 默认列数 round(sqrt(120))=11 -> 21120px 超限, 压到 8 列
     sheet, cols, rows, regions = F.pack(frames, premultiply=False, cols=8 if fw >= 1600 else None)
     if preview_dir:
@@ -342,13 +468,11 @@ def _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp
         F.preview_dark(sheet, False).save(f"{preview_dir}/preview_dark.png")
     n = len(regions)
     eid = eid or free_id(tx.catalog, tx.game, ctx.journal)
-    if max_size is None:
-        max_size = 1.08 if mode == "full" else 0.5
 
     step(tr("packing the effect bundle Ef%s (texture compression, can take a minute)"), eid)
     # 界面传来的画面参数原样打一行：位移不生效时要能分清是「没传到」还是「传了没用」
-    log.info("runfx.video %s: max_size=%s offset=(%s, %s) rotation=%s",
-             card, max_size, offset_x, offset_y, rotation)
+    log.info("runfx.video %s: size_h=%s -> max_size=%s (frame %sx%s, content h=%s) offset=(%s, %s) rotation=%s",
+             card, size_h, max_size, fw, fh, ch, offset_x, offset_y, rotation)
     data = build_bundle(chassis.read_bytes(), sheet, cols, rows, n, duration, eid,
                         max_size, aspect=fw / fh,
                         offset_x=offset_x, offset_y=offset_y, rotation=rotation)
@@ -358,12 +482,11 @@ def _apply(ctx, card, source, n, cell, duration, mode, max_size, se_label, sharp
     # 只换「自己」那条。双条目卡（自己/对手各一条）里 player=1 是对手，
     # 资源名带 Op（#4887、#14627 都是）。整张卡一起 drop 会把对手那条也顶掉，
     # 结果你做的视频在对手发动时也播。
+    path = effect_path(eid, token=True)
     mine = S.self_entries(tx.runfx_gate.for_card(card))
-    player = mine[0].get("player") if mine else 2
     if mine:
         tx.drop_runfx_entries(mine)
-    tx.add_runfx([R.clean_entry(tx.runfx_gate.template(), card, effect_path(eid, token=True),
-                                se_label, duration, player=player)])
+    tx.add_runfx(retarget_entries(mine, tx.runfx_gate.template(), card, path, se_label, duration))
     tx.rec.meta = {"source": str(source), "effect_id": eid, "frames": n, "sheet": list(sheet.size),
                    "grid": [cols, rows], "max_size": max_size,
                    "offset_x": offset_x, "offset_y": offset_y, "rotation": rotation}

@@ -6,12 +6,14 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.Globalization.NumberFormatting;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Storage.Pickers;
+using Windows.System;
 
 namespace MDStudio.Pages;
 
@@ -26,13 +28,36 @@ public sealed partial class AnimPage : Page
     private bool _donorSyncing;
 
     /// <summary>Silvicola 弹出曲线预设</summary>
+    // 「效果」选默认时传这条。与引擎 core/mdstudio/ops/video/cutin_flip.py 的
+    // DEFAULT_POP_CURVE 保持同一套数值：最大 108%，收尾停在 90%（2026-11-20 对齐）
+    /// <summary>
+    /// 召唤场景里屏幕高度等于多少个骨骼单位。2026-11-21 用两档尺寸（2930 / 1465）
+    /// 各录一段游戏视频反推，结果 2910 与 2913，取 2880 与播放器保持一致。
+    /// 界面按「占屏高倍数」显示，存盘与引擎仍用骨骼单位，两边都无损。
+    /// </summary>
+    private const double ScreenHeightUnits = 2880.0;
+
+    private static double UnitsToHeight(double units) => units / ScreenHeightUnits;
+    private static double HeightToUnits(double height) => height * ScreenHeightUnits;
+
     private const string CurveSilvicola =
-        "(0,10,10)(7,40,45)(14,65,72)(21,85,90)(27,99,96)(32,110,100)(40,75,100)(46,85,100)(52,80,100)(68,82,100)";
+        "(0,25,60)(6,55,75)(15,92,92)(23,108,100)(31,76,100)(68,90,100)";
 
     private List<CardItem> _donorCandidates = new();
     private int _donorFilledFor = -1;   // 自动填过来源卡的卡号：换卡才重填，用户改过就保留
     private List<SchemeItem> _schemes = new();
     private bool _schemeLoading;
+    /// <summary>上一次真正套用过的方案下标。下拉收起时靠它区分「换了方案」与「只是展开看一眼」。</summary>
+    private int _appliedScheme = -1;
+    /// <summary>特效生成与 Spine 导入的入口守卫，动画那边用的是 _checking。</summary>
+    private bool _fxChecking;
+    private bool _spineChecking;
+    /// <summary>上一次显示过的卡号与模式，用来判断「换了张卡」。0 表示还没显示过任何卡。</summary>
+    private int _lastShownId;
+    private string _lastShownMode = "";
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _carryTimer;
+    /// <summary>当前那条「沿用参数」挂在哪一行，四秒后照着它收起来。</summary>
+    private TextBlock? _carryTarget;
     // 自己有任务在跑才响应引擎进度广播。进度事件是全局广播，设置页下载组件时
     // 也会发事件（2026-11-11 用户实测：动画页底部出现"正在下载 %s"和别人的进度条）。
     // 本页常驻订阅不退订（切走要保自己的进度流），所以只能靠这个标志过滤。
@@ -57,6 +82,9 @@ public sealed partial class AnimPage : Page
     private readonly ObservableCollection<CardItem> _shown = new();
     private readonly List<SoundSlot> _slots = new();
     private List<CardItem> _all = new();
+    /// <summary>本地有预览缓存的卡号，动画与特效各一份。null = 没问到，一律当作有，退回旧行为。</summary>
+    private HashSet<int>? _previewCutin;
+    private HashSet<int>? _previewRunfx;
     private CardItem? _current;
     /// <summary>有任务在跑。跑的时候整张表单锁死，也不许换卡。</summary>
     private bool _jobRunning;
@@ -99,6 +127,9 @@ public sealed partial class AnimPage : Page
         DurBox.Value = 4.8;
         ZoomBox.NumberFormatter = DecimalFormatterFor(1, 0.1);
         ZoomBox.Value = 1.1;
+        // 步进 0.01：内置方案的 1800 单位折合 0.625，用 0.05 会被吸附到 0.65
+        SizeBox.NumberFormatter = DecimalFormatterFor(2, 0.01);
+        SizeBox.Value = 1;
         FxDurBox.NumberFormatter = DecimalFormatterFor(1, 0.1);
         FxDurBox.Value = 2.0;
         FxSizeBox.NumberFormatter = DecimalFormatterFor(2, 0.05);
@@ -106,6 +137,7 @@ public sealed partial class AnimPage : Page
 
         // 数值框清空后失焦要回填，不然框里一直空着（读值有 Num() 兜底，但显示不能空）
         HookNumberBoxes();
+
 
         // 内置的上下按钮太宽（框架固定 32px），换成自己的窄按钮。
         // 必须等 Loaded：构造函数里这些框的 Parent 还是 null（XAML 树没挂上），改不了父级。
@@ -211,11 +243,19 @@ public sealed partial class AnimPage : Page
     /// <summary>
     /// 收起 TextBox 模板里的清除按钮（名字就叫 DeleteButton）。
     /// 模板要等这块区域真正显示出来才落地（进页面时详情区还是折叠的），所以用个短周期定时器
-    /// 找它，找到就装闩：TextBox 在焦点/文字变化时会把 Visibility 设回 Visible，一露头就按回去。
+    /// 找它，找到就按死。
+    ///
+    /// 2026-11-21：原先只把 Visibility 设回 Collapsed 再挂个回调，没用。模板里那个
+    /// ButtonStates 组用的是离散关键帧动画（ButtonVisible 一直 HoldEnd），动画值盖住本地值，
+    /// 所以聚焦、有内容时 × 照样冒出来，挤在两枚上下按钮中间。
+    /// 改成把按钮本身压成零尺寸加全透明：动画只动 Visibility，动不了这几个属性。
     /// </summary>
     private static void HideClearButton(NumberBox box)
     {
         if (TryLatchClearButton(box)) return;
+
+        // 模板还没落地：先挂个聚焦回调兜底（用户点进去时一定能拿到），再轮询一阵
+        box.GotFocus += (_, _) => TryLatchClearButton(box);
 
         var timer = box.DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromMilliseconds(150);
@@ -229,13 +269,14 @@ public sealed partial class AnimPage : Page
 
     private static bool TryLatchClearButton(NumberBox box)
     {
-        var del = FindByName(box, "DeleteButton");
-        if (del is null) return false;
+        if (FindByName(box, "DeleteButton") is not Button del) return false;
+        del.Width = 0;
+        del.MinWidth = 0;
+        del.Padding = new Thickness(0);
+        del.Margin = new Thickness(0);
+        del.Opacity = 0;
+        del.IsHitTestVisible = false;
         del.Visibility = Visibility.Collapsed;
-        del.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (_, _) =>
-        {
-            if (del.Visibility == Visibility.Visible) del.Visibility = Visibility.Collapsed;
-        });
         return true;
     }
 
@@ -350,7 +391,8 @@ public sealed partial class AnimPage : Page
         try
         {
             var data = await engine.CallAsync("cards.status");
-            _all = ParseCards(data);
+            (_previewCutin, _previewRunfx) = await LoadPreviewCardsAsync(engine);
+            _all = ParseCards(data, _previewCutin, _previewRunfx);
             foreach (var c in _all) c.Mode = _mode;
             await LoadDonorPresetsAsync(engine);
             FillDonorCandidates();
@@ -431,7 +473,35 @@ public sealed partial class AnimPage : Page
         CountText.Text = $"共 {_shown.Count} 张{FilterSuffix()} · 这张卡不在当前搜索结果内";
     }
 
-    private static List<CardItem> ParseCards(JsonElement data)
+    /// <summary>
+    /// 本地有预览缓存的卡号，动画与特效分开。查不到就返回 null：宁可留着播放入口
+    /// 让用户点一下，也不要把所有卡的入口都藏起来。
+    /// </summary>
+    private static async Task<(HashSet<int>?, HashSet<int>?)> LoadPreviewCardsAsync(EngineClient engine)
+    {
+        try
+        {
+            var rows = await engine.CallAsync("preview.list");
+            if (rows.ValueKind != JsonValueKind.Array) return (null, null);
+            var cutin = new HashSet<int>();
+            var runfx = new HashSet<int>();
+            foreach (var r in rows.EnumerateArray())
+            {
+                if (!r.TryGetProperty("card", out var c) || c.ValueKind != JsonValueKind.Number) continue;
+                var kind = r.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String
+                    ? k.GetString() : "cutin";
+                (kind == "runfx" ? runfx : cutin).Add(c.GetInt32());
+            }
+            return (cutin, runfx);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    private static List<CardItem> ParseCards(JsonElement data, HashSet<int>? cutinPreviews,
+                                             HashSet<int>? runfxPreviews)
     {
         var list = new List<CardItem>();
         if (data.ValueKind != JsonValueKind.Object ||
@@ -444,9 +514,12 @@ public sealed partial class AnimPage : Page
             if (c.TryGetProperty("real", out var r) && r.ValueKind == JsonValueKind.Number
                 && r.GetInt32() > 0)
                 continue;
+            int cardId = c.TryGetProperty("id", out var idEl) ? idEl.GetInt32() : 0;
             var item = new CardItem
             {
-                Id = c.TryGetProperty("id", out var id) ? id.GetInt32() : 0,
+                Id = cardId,
+                HasCutinPreview = cutinPreviews is null || cutinPreviews.Contains(cardId),
+                HasRunfxPreview = runfxPreviews is null || runfxPreviews.Contains(cardId),
                 Name = Str(c, "name"),
                 Cutin = Str(c, "cutin"),
                 Runfx = Str(c, "runfx"),
@@ -637,7 +710,7 @@ public sealed partial class AnimPage : Page
             var data = await engine.CallAsync("cards.search", args);
             if (cts.IsCancellationRequested) return;
 
-            var rows = ParseCards(data);
+            var rows = ParseCards(data, _previewCutin, _previewRunfx);
             _shown.Clear();
             foreach (var c in rows) { c.Mode = _mode; _shown.Add(c); }
             UpdateEmptyHint();
@@ -750,21 +823,28 @@ public sealed partial class AnimPage : Page
         DetailPanel.Visibility = Visibility.Visible;
 
         ShowHeader(card);
+        MaybeShowCarryHint(card);
 
         // 刷新 / 复原现在两个模式共用同一套控件，启用状态取当前模式那一维：
         // 动画模式看 HasOurs，特效模式看 HasOursRunfx。
         RestoreButton.IsEnabled = InCutinMode ? card.HasOurs : card.HasOursRunfx;
         SetStateLine(card);
 
-        // 只有「没有自己高清底盘」的卡才用来源卡：★（借用底图）和无动画。
-        // 官方动画是原地替换骨架与贴图、自改动画用的是它自己那份，选来源卡都不生效，
-        // 显示出来只会让人以为能换底盘（2026-11-19 用户指出这一点）。
-        // Cutin 的原值是 game / yours / wiped / shared，空串表示没有动画。
-        var needDonor = string.IsNullOrEmpty(card.Cutin) || card.Cutin == "shared";
-        DonorPanel.Visibility = needDonor ? Visibility.Visible : Visibility.Collapsed;
-        DonorHint.Text = card.Cutin == "shared"
-            ? "这张卡没有自己的高清资源，生成会用选定的来源卡给它克隆一套。"
-            : "按召唤类型挑来源卡，整套动画复制给这张卡，来源卡不受影响。";
+        // 三档都用来源卡：官方动画、官方★、无动画。2026-11-22 起视频生成一律克隆来源卡，
+        // 官方那套的 prefab、相机、Timeline 分镜会一起换成来源卡的。
+        // 自改动画（yours / wiped）是已经生成过的，来源卡不再参与，藏起来。
+        var showDonor = card.Cutin is not "yours" and not "wiped";
+        DonorPanel.Visibility = showDonor ? Visibility.Visible : Visibility.Collapsed;
+
+        // 已经用本工具改过的卡，生成区整块收起来：必须先复原才能再生成，
+        // 留着输入框和生成按钮只会让人点了才看到「已经挂着动画了」。
+        // 特效那边只收「用视频自制」，音效区照旧——换声音不需要重做一套动画。
+        var cutinOurs = !showDonor;
+        CutinBuildPanel.Visibility = cutinOurs ? Visibility.Collapsed : Visibility.Visible;
+        SpineImportPanel.Visibility = CutinBuildPanel.Visibility;
+        RunfxBuildPanel.Visibility = card.Runfx is "yours" or "wiped"
+            ? Visibility.Collapsed : Visibility.Visible;
+        DonorHint.Text = "按召唤类型自动选定，可换成别的预设。整套动画结构复制给这张卡，来源卡不受影响。";
         // 面板藏起来也要把值填上：后端 apply 第一步就要求 donor 非空，官方卡虽然不拿它
         // 当底盘，缺了这个参数会直接报「先选一张来源卡」。
         // 下拉在重载时被重建过（Items.Clear 会清掉选中态），按框里现在这张补回来，
@@ -806,6 +886,69 @@ public sealed partial class AnimPage : Page
     /// 这样在列表里来回切卡时，这一行的位置和语气都不变，只有内容在换。
     /// 动画与特效两个模式共用这一个控件。
     /// </summary>
+    /// <summary>
+    /// 换一张卡时提一句「参数还是上一张的」。只在这一屏待过别的卡、且当前参数已偏离
+    /// 默认值时才出现，默认值状态不打扰（2026-11-23 加）。
+    /// </summary>
+    private void MaybeShowCarryHint(CardItem card)
+    {
+        var prevId = _lastShownId;
+        var prevMode = _lastShownMode;
+        _lastShownId = card.Id;
+        _lastShownMode = _mode;
+
+        CutinCarryHint.Visibility = Visibility.Collapsed;
+        FxCarryHint.Visibility = Visibility.Collapsed;
+        _carryTarget = null;
+
+        if (prevId == 0 || prevId == card.Id || prevMode != _mode) return;
+        if (!HasTunedParams()) return;
+
+        // 提示挂在每个模式各自那一行的右端：动画在「来源卡」这行，特效在「时机」这行。
+        // 那两行在「自改动画」状态下会收起来，没地方挂就不提，不另找位置挤排版。
+        if (InCutinMode)
+        {
+            if (card.Cutin is "yours" or "wiped") return;
+            _carryTarget = CutinCarryHint;
+        }
+        else
+        {
+            _carryTarget = FxCarryHint;
+        }
+
+        _carryTarget.Visibility = Visibility.Visible;
+        _carryTimer ??= CreateCarryTimer();
+        _carryTimer.Start();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer CreateCarryTimer()
+    {
+        var t = DispatcherQueue.CreateTimer();
+        t.Interval = TimeSpan.FromSeconds(4);
+        t.IsRepeating = false;
+        t.Tick += (_, _) =>
+        {
+            if (_carryTarget is { } target) target.Visibility = Visibility.Collapsed;
+        };
+        return t;
+    }
+
+    /// <summary>参数是否已经偏离默认值。全是默认值时，沿用不沿用没有区别，不必提示。</summary>
+    private bool HasTunedParams()
+    {
+        static bool Diff(double a, double b) => Math.Abs(a - b) > 1e-6;
+
+        if (InCutinMode)
+            return Diff(Num(FramesBox, 120), 120) || Diff(Num(DurBox, 4.8), 4.8)
+                || Diff(Num(CellBox, 1664), 1664) || Diff(Num(SizeBox, 1), 1)
+                || Diff(Num(OffXBox, 0), 0) || Diff(Num(OffYBox, 0), 0)
+                || Diff(Num(RotBox, 0), 0) || Diff(Num(ZoomBox, 1.1), 1.1);
+
+        return Diff(Num(FxFramesBox, 60), 60) || Diff(Num(FxDurBox, 2.0), 2.0)
+            || Diff(Num(FxSizeBox, 0.5), 0.5) || Diff(Num(FxOffXBox, 0), 0)
+            || Diff(Num(FxOffYBox, 0), 0) || Diff(Num(FxRotBox, 0), 0);
+    }
+
     private void SetStateLine(CardItem card)
     {
         StateLine.Text = StateLineOf(card);
@@ -834,7 +977,7 @@ public sealed partial class AnimPage : Page
             if (card.CutinSrc > 0)
                 return "这张卡现在播的是借来的动画，生成会用选定的来源卡单独建一套。";
             if (card.Cutin.Length > 0)
-                return "这张卡自带官方召唤动画，生成会原地替换骨架和贴图，官方演出结构保留。";
+                return "这张卡自带官方召唤动画。生成会整套换成来源卡的演出，镜头与分镜跟着换，再写入你的帧。";
             return "这张卡还没有召唤动画，选定来源卡后生成一套。";
         }
 
@@ -2057,6 +2200,34 @@ public sealed partial class AnimPage : Page
     }
 
     // --------------------------------------------------------------- 生成
+    /// <summary>
+    /// 写游戏文件前先确认游戏没开。拆帧、超分要好几分钟，等写盘那一步再报
+    /// 「请先关闭游戏」，这几分钟就白扔了（2026-11-23 查出来的）。
+    /// 查不到就放行：真开着的时候写盘那层还会再拦一次。
+    /// </summary>
+    private async Task<bool> EnsureGameClosedAsync()
+    {
+        if (App.DryRun || App.Engine is not { } engine) return true;
+        try
+        {
+            var r = await engine.CallAsync("app.ready",
+                new Dictionary<string, object?> { ["check_game"] = true });
+            if (r.ValueKind == JsonValueKind.Object
+                && r.TryGetProperty("game_running", out var run)
+                && run.ValueKind == JsonValueKind.True)
+            {
+                await InfoAsync("游戏还开着",
+                    "生成要写入游戏文件，请先完全关闭游戏（包括后台进程）再试。", danger: true);
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.AddLog("WARN", $"检查游戏是否运行失败：{ex.Message}");
+        }
+        return true;
+    }
+
     private async void BuildButton_Click(object sender, RoutedEventArgs e)
     {
         if (_checking) return;
@@ -2084,17 +2255,19 @@ public sealed partial class AnimPage : Page
             await InfoAsync("已经挂着动画了", "这张卡上的召唤动画是本工具加的。要换的话，先点右上角的「复原」。");
             return;
         }
+        if (!await EnsureGameClosedAsync()) return;
 
         if (string.IsNullOrWhiteSpace(SourceBox.Text))
         {
             await InfoAsync("还没有选素材", "先选一个视频、GIF，或者一帧文件夹。");
             return;
         }
+        if (!await CheckFpsAsync((int)Num(FramesBox, 120), Num(DurBox, 1.6))) return;
         // 自己没有动画、也不是借用底图的卡，必须挑一张来源卡。后端已经不猜默认卡了，
         // 这里先挡下来，免得跑到一半报错。
         if (DonorOf(card) is null)
         {
-            await InfoAsync("还没有选来源卡", "这张卡自己没有召唤动画，要先在上面选一张有动画的卡当来源卡。");
+            await InfoAsync("还没有选来源卡", "在右上方用「源卡预设」挑一张。");
             return;
         }
 
@@ -2127,7 +2300,7 @@ public sealed partial class AnimPage : Page
         // 按卡片状态判，不按筛选档位名写死。
         var borrowed = card.Cutin == "shared";
         var ok = card.Official || borrowed
-            ? await ConfirmOverwriteAsync("召唤动画", borrowed, "继续生成")
+            ? await ConfirmCutinOverwriteAsync(borrowed, "继续生成")
             : await ConfirmGenerateAsync("召唤动画", "生成召唤动画");
         if (!ok) return;
         // 三档统一：官方自带、官方★借用、无动画都用来源卡覆盖，
@@ -2140,11 +2313,14 @@ public sealed partial class AnimPage : Page
             ["source"] = SourceBox.Text,
             ["n"] = (int)Num(FramesBox, 120),
             ["duration"] = Num(DurBox, 4.8),
-            ["size"] = (int)Num(SizeBox, 2930),
+            ["size"] = (int)Math.Round(HeightToUnits(Num(SizeBox, 1.0))),
             ["mode"] = "auto",
             ["pop"] = PopBox.IsChecked == true,
-            ["offset_x"] = Num(OffXBox, 0),
-            ["offset_y"] = Num(OffYBox, 0),
+            // 位移按 % 屏宽 / % 屏高传，换算留给引擎：骨架尺寸随来源卡的 Spine 物体缩放
+            // 折算过（0.09~0.28），同一个单位数在不同卡上屏幕上能差两倍
+            ["offx_pct"] = Num(OffXBox, 0),
+            ["offy_pct"] = Num(OffYBox, 0),
+            ["height"] = Num(SizeBox, 1.0),
             ["zoom"] = Num(ZoomBox, 1.1),
             ["rotate"] = Num(RotBox, 0),
             ["cell"] = (int)Num(CellBox, 1664),
@@ -2212,7 +2388,21 @@ public sealed partial class AnimPage : Page
         if (resultTitle is not null)
         {
             SetStatus(resultDanger ? "生成失败" : "生成完成");
-            await InfoAsync(resultTitle, resultBody ?? "", resultDanger);
+            if (!resultDanger && !App.DryRun)
+            {
+                // 生成完直接问一句，省得用户再回列表里找那枚播放图标
+                if (await ConfirmAsync("生成完成",
+                        $"{card.Title} 的召唤动画已生成。要在软件里看一遍吗？",
+                        "预览", card.Title, CardMetaOf(card),
+                        "之后也能在「自改动画」那一行点播放图标。"))
+                {
+                    await ShowCutinPreviewAsync(card.Id);
+                }
+            }
+            else
+            {
+                await InfoAsync(resultTitle, resultBody ?? "", resultDanger);
+            }
         }
     }
 
@@ -2224,6 +2414,27 @@ public sealed partial class AnimPage : Page
 
     private static double Num(NumberBox box, double fallback)
         => double.IsNaN(box.Value) ? fallback : box.Value;
+
+    /// <summary>每秒最多放 120 帧。游戏里每秒用得着的最多 60 帧，再密只是白占图集。</summary>
+    private const int MaxFps = 120;
+
+    /// <summary>
+    /// 帧数 ÷ 时长 超过 120 就拦下来，并给出两条具体出路（降帧数或加时长）。
+    /// 返回 false 表示不该继续生成。
+    /// </summary>
+    private async Task<bool> CheckFpsAsync(int frames, double seconds)
+    {
+        if (seconds <= 0 || frames <= 0) return true;
+        double fps = frames / seconds;
+        if (fps <= MaxFps) return true;
+        int maxFrames = Math.Max(4, (int)Math.Floor(MaxFps * seconds));
+        double minSeconds = Math.Ceiling(frames / (double)MaxFps * 10) / 10;
+        await InfoAsync("帧率超过 120",
+            $"每秒 {fps:0} 帧（{frames} 帧 ÷ {seconds:0.0} 秒），上限是每秒 {MaxFps} 帧。\n\n"
+            + $"要么把这 {seconds:0.0} 秒里的帧数降到 {maxFrames}，"
+            + $"要么把时长加到 {minSeconds:0.0} 秒（{frames} 帧正好放得下）。");
+        return false;
+    }
 
     /// <summary>超分倍数：0 = 关闭，2 / 4 = 先放大再缩回。</summary>
     private int SelectedScale()
@@ -2350,6 +2561,22 @@ public sealed partial class AnimPage : Page
 
     private async void SpineImportButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_spineChecking) return;
+        _spineChecking = true;
+        SpineImportButton.IsEnabled = false;
+        try
+        {
+            await ImportSpineAsync();
+        }
+        finally
+        {
+            SpineImportButton.IsEnabled = !_donorLocked;
+            _spineChecking = false;
+        }
+    }
+
+    private async Task ImportSpineAsync()
+    {
         if (_current is not { } card || !await RequireSpineSourceAsync()) return;
 
         if (card.HasOurs)
@@ -2364,6 +2591,7 @@ public sealed partial class AnimPage : Page
             await InfoAsync("还没有选来源卡", "Spine 导入会复制来源卡那套骨架，先在右上方选一张有动画的卡。");
             return;
         }
+        if (!await EnsureGameClosedAsync()) return;
 
         // 3.x 的骨架要靠转换器升到 4.2，没装就先引导去装
         if (!await ComponentAssets.EnsureAsync(XamlRoot, "spine", SpineSourceBox.Text)) return;
@@ -2372,7 +2600,7 @@ public sealed partial class AnimPage : Page
         // 覆盖官方就用覆盖专用文案，其余档位用普通文案，都把「导错可复原」说清。
         var borrowed = card.Cutin == "shared";
         var ok = card.Official || borrowed
-            ? await ConfirmOverwriteAsync("召唤动画", borrowed, "导入到这张卡")
+            ? await ConfirmCutinOverwriteAsync(borrowed, "导入到这张卡")
             : await ConfirmAsync("导入 Spine 动画？",
                 "把 Spine 里的动画导进这张卡，写进游戏。",
                 "导入到这张卡", card.Title, CardMetaOf(card),
@@ -2399,6 +2627,22 @@ public sealed partial class AnimPage : Page
 
     private async void FxBuildButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_fxChecking) return;
+        _fxChecking = true;
+        FxBuildButton.IsEnabled = false;
+        try
+        {
+            await BuildFxAsync();
+        }
+        finally
+        {
+            FxBuildButton.IsEnabled = true;
+            _fxChecking = false;
+        }
+    }
+
+    private async Task BuildFxAsync()
+    {
         if (_current is not { } card) return;
 
         if (string.IsNullOrWhiteSpace(FxSourceBox.Text))
@@ -2411,12 +2655,34 @@ public sealed partial class AnimPage : Page
             await InfoAsync("已经挂着特效了", "这张卡上的发动特效是本工具加的。要重做先点右上角的「复原」。");
             return;
         }
+        if (!await CheckFpsAsync((int)Num(FxFramesBox, 60), Num(FxDurBox, 2.0))) return;
+        if (!await EnsureGameClosedAsync()) return;
 
-        // 抠像不再由界面决定：引擎按 auto 判定（自带透明通道直接用、有幕布才抠）。
-        // 这里只问一句「要不要跑模型 / 要不要超分」，缺了就先去装。
-        int upscale = SelectedFxScale();
-        if (!await ComponentAssets.EnsureAsync(XamlRoot, "runfx.video", FxSourceBox.Text, upscale > 0))
+        // 特效底盘只有一页材质槽，页数上限按 1 算。动画那边的预检同时查组件、素材帧数、
+        // 页数三件，这里复用它，只是把上限换掉（2026-11-23 补的）。
+        var preFx = await ComponentAssets.CutinPrecheckAsync(
+            "runfx.video", FxSourceBox.Text, SelectedFxScale() > 0,
+            (int)Num(FxFramesBox, 60), FxCellHeight(), maxPages: 1);
+        if (preFx is null)
+        {
+            await InfoAsync("组件状态没查成",
+                "引擎这一下没回话，没有开始任何写入。等几秒再点一次就好。", danger: true);
             return;
+        }
+        if (preFx.Missing is { Count: > 0 })
+        {
+            await ComponentAssets.PromptAsync(XamlRoot, preFx.Missing);
+            return;
+        }
+        if (!string.IsNullOrEmpty(preFx.Block))
+        {
+            await InfoAsync("失败", $"游戏文件没有改动。\n{preFx.Block}", danger: true);
+            return;
+        }
+
+        // 组件已经在上面那次预检里查过、也弹过下载入口了，这里不再问第二遍。
+        // 抠像不按界面开关走：引擎用 auto 判定（自带透明通道直接用、有幕布才抠）。
+        int upscale = SelectedFxScale();
 
         var ok = card.HasGameRunfx
             ? await ConfirmFxReplaceAsync(card, "生成发动特效")
@@ -2436,14 +2702,20 @@ public sealed partial class AnimPage : Page
             ["sharp_scale"] = upscale,
             // 音效独立成一栏了，生成动画时不碰声音
             ["video_audio"] = false,
-            ["max_size"] = Num(FxSizeBox, 0.5),
+            // 界面填的是「占屏高」，引擎按帧的宽高比换算成 m_MaxParticleSize（占屏宽）
+            ["size_h"] = Num(FxSizeBox, 0.5),
             ["offset_x"] = FxOffsetX(FxOffXBox),
-            ["offset_y"] = FxOffsetY(FxOffYBox, Num(FxSizeBox, 0.5)),
+            ["offset_y"] = FxOffsetY(FxOffYBox),
+            // 预览缓存要记界面的百分比：世界单位离开补偿曲线就读不懂
+            ["offx_pct"] = Num(FxOffXBox, 0),
+            ["offy_pct"] = Num(FxOffYBox, 0),
             ["rotation"] = Num(FxRotBox, 0),
             ["dry_run"] = App.DryRun,
         };
 
-        await RunFxJobAsync("runfx.video", args, "正在生成发动特效…", "已生成", notify: true);
+        await RunFxJobAsync("runfx.video", args, "正在生成发动特效…", "已生成", notify: true,
+                            previewCard: card.Id, previewKind: "runfx",
+                            previewText: $"{card.Title} 的发动特效已生成。要在软件里看一遍吗？");
     }
 
     /// <summary>特效的超分倍数：0 = 关闭。找不到就给 0。</summary>
@@ -2491,10 +2763,20 @@ public sealed partial class AnimPage : Page
     private const double FxRefWidth = 1920.0;
 
     /// <summary>
-    /// 0 偏移时画面中心比屏幕中心高 4.79% 框宽（框 960 时高 46px，框 1920 时高 92px），
-    /// 这是粒子枢轴带来的，按框宽比例补回来，填 0 才是正中。
+    /// 0 偏移时画面中心比屏幕中心高多少像素（1920×1080 基准）。这是粒子枢轴带来的，
+    /// 补回来填 0 才是正中。
+    ///
+    /// 2026-11-21 用 #22159 三档实测（画面大小 0.5 / 0.75 / 1.0，各录一段量网格线中心）：
+    ///   0.5  → 偏移 -5.505 单位，正中
+    ///   0.75 → 偏移 -8.059 单位，偏低 24px
+    ///   1.0  → 偏移 -10.49 单位，偏低 46.6px
+    /// 从 0.75 与 1.0 反推「要多补多少才正中」，两档给出的目标偏移都是 -5.5 单位，
+    /// 局部斜率也都是 9.35px/单位。也就是说这个偏差是**固定**的，
+    /// 旧版按「框宽比例」（0.0479 × 画面大小 × 1920）放大补偿是错的：
+    /// 画面 1.0 时补 92px 想抵 92px 的偏差，而偏差本身只有 46px，补过头又被曲线吃掉一半。
+    /// 46px = 0.0479 × 960，也就是当年在 960 宽的框上量到的那个数，与画面大小无关。
     /// </summary>
-    private const double PivotBias = 0.0479;
+    private const double PivotBiasPx = 46.0;
 
     /// <summary>把「想要的屏幕位移（px，正数向上）」反解成粒子单位。</summary>
     private static double FxShiftToUnits(double px)
@@ -2509,12 +2791,12 @@ public sealed partial class AnimPage : Page
         return -Num(box, 0) / 100.0 * FxRefWidth / PxPerUnitX;
     }
 
-    /// <summary>上下移：按屏高百分比换单位，正数向上。位移从「居中」起算。</summary>
-    private static double FxOffsetY(NumberBox box, double size)
+    /// <summary>上下移：按屏高百分比换单位，正数向上。位移从「正中」起算。</summary>
+    private static double FxOffsetY(NumberBox box)
     {
         double target = Num(box, 0) / 100.0 * FxRefHeight;
-        double bias = -PivotBias * size * FxRefWidth;
-        return FxShiftToUnits(target + bias);
+        // 枢轴偏差是固定值，不随画面大小变（见 PivotBiasPx 的实测记录）
+        return FxShiftToUnits(target - PivotBiasPx);
     }
 
 
@@ -2591,7 +2873,8 @@ public sealed partial class AnimPage : Page
 
     /// <summary>跑一个动作，处理取消与失败，跑完刷新卡片状态。三个区共用。</summary>
     private async Task<JsonElement> RunJobAsync(string op, Dictionary<string, object?> args,
-        string area, string running, string done, bool reload = true, bool notify = false)
+        string area, string running, string done, bool reload = true, bool notify = false,
+        int previewCard = 0, string previewKind = "cutin", string? previewText = null)
     {
         if (App.Engine is not { } engine) return default;
 
@@ -2642,12 +2925,27 @@ public sealed partial class AnimPage : Page
             SetStatus(resultDanger ? "失败，游戏文件没有改动"
                 : App.DryRun ? "预演结束，没有写游戏文件" : done);
         if (resultTitle is not null)
-            await InfoAsync(resultTitle, resultBody ?? "", resultDanger);
+        {
+            // 生成完直接问一句，省得用户再回列表里找那枚播放图标（和动画页同一套）
+            if (!resultDanger && !App.DryRun && previewCard > 0)
+            {
+                if (await ConfirmAsync(resultTitle,
+                        previewText ?? $"{(resultBody ?? "")}。要在软件里看一遍吗？", "预览"))
+                    await ShowCutinPreviewAsync(previewCard, previewKind);
+            }
+            else
+            {
+                await InfoAsync(resultTitle, resultBody ?? "", resultDanger);
+            }
+        }
         return data;
     }
 
-    private Task<JsonElement> RunFxJobAsync(string op, Dictionary<string, object?> args, string running, string done, bool notify = false)
-        => RunJobAsync(op, args, "runfx", running, done, notify: notify);
+    private Task<JsonElement> RunFxJobAsync(string op, Dictionary<string, object?> args, string running,
+                                            string done, bool notify = false, int previewCard = 0,
+                                            string previewKind = "cutin", string? previewText = null)
+        => RunJobAsync(op, args, "runfx", running, done, notify: notify,
+                       previewCard: previewCard, previewKind: previewKind, previewText: previewText);
 
     /// <summary>
     /// 音效写入也上同一张遮罩。给一张卡第一次配音要重打包 128MB 的 data.unity3d，
@@ -2713,6 +3011,14 @@ public sealed partial class AnimPage : Page
 
     /// <summary>覆盖官方资源的确认框：官方／官方★共用。这类是本工具唯一会顶掉
     /// 游戏自带资源的情形，必须单独说清楚；官方★（借用）再补一句底图不受影响。</summary>
+    /// <summary>召唤动画现在一律克隆来源卡，文案要说清演出结构也会跟着换。</summary>
+    private Task<bool> ConfirmCutinOverwriteAsync(bool borrowed, string primary)
+        => ConfirmAsync("覆盖官方动画？",
+            borrowed
+                ? "现在播的是借用同名卡的官方动画。继续会单独建一套，那张卡不受影响。"
+                : "自带官方动画。继续会整套换成来源卡的演出。",
+            primary, DlgCardName, DlgCardMeta, "之后点「复原」可以还原。");
+
     private Task<bool> ConfirmOverwriteAsync(string what, bool borrowed, string primary)
         => ConfirmAsync($"覆盖官方{what}？",
             borrowed
@@ -2902,28 +3208,6 @@ public sealed partial class AnimPage : Page
         }
     }
 
-    private static IEnumerable<CardItem> FilterCards(List<CardItem> src, string q)
-    {
-        q = (q ?? "").Trim();
-        if (q.Length == 0) return src;
-        return src.Where(c => c.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                              c.Id.ToString().Contains(q, StringComparison.Ordinal));
-    }
-
-    private void DonorBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
-    {
-        if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
-        sender.ItemsSource = FilterCards(_donorCandidates, sender.Text);
-    }
-
-    private static void DonorChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
-    {
-        if (args.SelectedItem is CardItem c) sender.Text = $"{c.Id} {c.Name}";
-    }
-
-    private void DonorBox_SuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
-        => DonorChosen(sender, args);
-
     private void DonorPresetBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_donorSyncing) return;
@@ -2961,7 +3245,7 @@ public sealed partial class AnimPage : Page
     }
 
     /// <summary>从来源卡框里取卡号。框里没填或不是数字就返回 null。</summary>
-    private static int? ReadDonorId(AutoSuggestBox box)
+    private static int? ReadDonorId(TextBox box)
     {
         var t = (box.Text ?? "").Trim();
         var idPart = new string(t.TakeWhile(char.IsDigit).ToArray());
@@ -2989,7 +3273,7 @@ public sealed partial class AnimPage : Page
                         Frames = (int)Num2(s, "frames", 72),
                         Cell = (int)Num2(s, "cell", 1664),
                         Dur = Num2(s, "dur", 1.6),
-                        Size = (int)Num2(s, "size", 2930),
+                        Size = (int)Num2(s, "size", 2880),
                         OffX = (int)Num2(s, "offx", 0),
                         OffY = (int)Num2(s, "offy", 0),
                         Rot = (int)Num2(s, "rot", 0),
@@ -3009,7 +3293,7 @@ public sealed partial class AnimPage : Page
             _schemeLoading = false;
             // 选中第 0 项时事件被守卫拦掉了, 内置「默认」的参数要在这里手动填一次,
             // 否则界面显示「默认」但数字还是构造值 (120/1080/4.8/4800)。
-            if (_schemes.Count > 0) ApplyScheme(_schemes[0]);
+            if (_schemes.Count > 0) ApplyScheme(0);
         }
         catch { /* 方案读不到不影响主流程 */ }
     }
@@ -3018,7 +3302,7 @@ public sealed partial class AnimPage : Page
     {
         if (_schemeLoading) return;
         if (SchemeBox.SelectedIndex < 0 || SchemeBox.SelectedIndex >= _schemes.Count) return;
-        ApplyScheme(_schemes[SchemeBox.SelectedIndex]);
+        ApplyScheme(SchemeBox.SelectedIndex);
     }
 
     /// <summary>下拉收起时再套用一次当前方案。用户改了参数后再点「默认」，选中项没变，
@@ -3027,7 +3311,10 @@ public sealed partial class AnimPage : Page
     {
         if (_schemeLoading) return;
         if (SchemeBox.SelectedIndex < 0 || SchemeBox.SelectedIndex >= _schemes.Count) return;
-        ApplyScheme(_schemes[SchemeBox.SelectedIndex]);
+        // 只是展开看一眼、没换项就不要重套：以前这里无条件套用，用户改完参数点开下拉
+        // 看看有哪些方案，收起的一瞬间参数全被冲回原样（2026-11-23 查出来的）。
+        if (SchemeBox.SelectedIndex == _appliedScheme) return;
+        ApplyScheme(SchemeBox.SelectedIndex);
     }
 
     /// <summary>失败提示精简：只取第一行，超长截断。</summary>
@@ -3037,14 +3324,20 @@ public sealed partial class AnimPage : Page
         return line.Length <= 160 ? line : line[..160] + "…";
     }
 
-    private void ApplyScheme(SchemeItem s)
+    private void ApplyScheme(int index)
     {
+        if (index < 0 || index >= _schemes.Count) return;
+        var s = _schemes[index];
+        _appliedScheme = index;
         FramesBox.Value = s.Frames;
         CellBox.Value = s.Cell;
         DurBox.Value = s.Dur;
-        SizeBox.Value = s.Size;
-        OffXBox.Value = s.OffX;
-        OffYBox.Value = s.OffY;
+        SizeBox.Value = UnitsToHeight(s.Size);
+        // 左右移/上下移现在是 % 屏宽/屏高（范围 ±75）。旧方案存的是角色高度倍数
+        // （0.10 这种），读进来按百分比理解会偏小，界面上看一眼就知道要重填。
+        // 见到超范围的当脏值处理，回零，免得挪出屏幕
+        OffXBox.Value = Math.Abs(s.OffX) > 75 ? 0 : s.OffX;
+        OffYBox.Value = Math.Abs(s.OffY) > 75 ? 0 : s.OffY;
         RotBox.Value = s.Rot;
         ZoomBox.Value = s.Zoom;
         PopBox.IsChecked = s.Pop;
@@ -3076,7 +3369,7 @@ public sealed partial class AnimPage : Page
             Frames = (int)Num(FramesBox, 72),
             Cell = (int)Num(CellBox, 1664),
             Dur = Num(DurBox, 1.6),
-            Size = (int)Num(SizeBox, 2930),
+            Size = (int)Math.Round(HeightToUnits(Num(SizeBox, 1.0))),
             OffX = (int)Num(OffXBox, 0),
             OffY = (int)Num(OffYBox, 0),
             Rot = (int)Num(RotBox, 0),
@@ -3133,7 +3426,7 @@ public sealed partial class AnimPage : Page
             SchemeBox.Items.Add(new ComboBoxItem { Content = s.Name });
         SchemeBox.SelectedIndex = sel;
         _schemeLoading = false;
-        ApplyScheme(_schemes[sel]);
+        ApplyScheme(sel);
     }
 
     private static double Num2(JsonElement e, string key, double fallback)
@@ -3147,6 +3440,7 @@ public sealed partial class AnimPage : Page
         if (CurvePresetBox.SelectedIndex == 1)
             _ = OpenCurveDialogAsync();
     }
+
 
     private void PopBox_Toggled(object sender, RoutedEventArgs e) => SyncCurveUi();
 
@@ -3170,7 +3464,7 @@ public sealed partial class AnimPage : Page
             MinWidth = 440,
             MinHeight = 150,
             Text = _customCurve,
-            PlaceholderText = "(0,10,10)(7,40,45)(14,65,72)",
+            PlaceholderText = "(0,25,60)(6,55,75)(15,92,92)",
         };
         var hint = new TextBlock
         {
@@ -3196,6 +3490,26 @@ public sealed partial class AnimPage : Page
             _customCurve = box.Text.Trim();
         else
             CurvePresetBox.SelectedIndex = 0;   // 取消就退回默认
+    }
+
+    /// <summary>列表里的播放图标：只对「自改动画」显示。</summary>
+    private async void PlayPreview_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button b || b.Tag is not int card) return;
+        await ShowCutinPreviewAsync(card);
+    }
+
+    /// <summary>
+    /// 弹出动画预览。浮层挂在主窗口上，所以任何页面都能叫出来，
+    /// 生成完在别的页面点「预览」也不用先切回本页。
+    /// </summary>
+    private async Task ShowCutinPreviewAsync(int card, string? kind = null)
+    {
+        if (App.MainWindow is not MainWindow shell) return;
+        var item = _shown.FirstOrDefault(c => c.Id == card) ?? _all.FirstOrDefault(c => c.Id == card);
+        if (await shell.ShowCutinPreviewAsync(card, item?.Title ?? $"#{card}",
+                item is null ? "" : CardMetaOf(item), kind ?? _mode) is { } error)
+            SetStatus(error);
     }
 
     private void SetStatus(string message)

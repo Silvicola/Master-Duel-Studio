@@ -27,13 +27,15 @@ internal static class ComponentAssets
     /// 用户会以为没点上）。返回 null 表示这一下没问到，调用方不该开始写盘。
     /// </summary>
     public static async Task<Precheck?> CutinPrecheckAsync(string kind, string? source,
-                                                           bool sharp, int n, int cell)
+                                                           bool sharp, int n, int cell,
+                                                           int maxPages = 2)
     {
         if (App.Engine is not { } engine) return null;
         JsonElement r;
         try
         {
-            r = await engine.CallAsync("cutin.precheck", new { kind, source, sharp, n, cell });
+            r = await engine.CallAsync("cutin.precheck",
+                new { kind, source, sharp, n, cell, max_pages = maxPages });
         }
         catch (Exception ex)
         {

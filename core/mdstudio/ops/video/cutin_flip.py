@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 import logging
+import time
 from pathlib import Path
 
 from mdstudio.core.baseline import family_for
@@ -420,18 +421,28 @@ def donor_anim_name(game, donor: int) -> str:
     return "animation"
 
 
-def offset_to_units(offset, size_units: float, frame_width: float) -> float:
-    """界面上的「左右移 / 上下移」（帧图像素）-> 骨骼单位。
+def offset_to_units(offset, size_units: float) -> float:
+    """界面上的「左右移 / 上下移」（角色高度倍数）-> 骨骼单位。
 
-    帧图宽度会被铺满到 size_units 个骨骼单位（角色尺寸），所以
-    1 帧图像素 = size_units / frame_width 个骨骼单位。
-    推论：填的数值等于 frame_width（也就是界面上的「像素/帧」）时，
-    位移正好一个帧图宽。这条是界面提示的依据，别改成别的口径。
-
-    换来源卡时 size_units 会被 donor_scale 归一化，所以同一个数值在
-    不同来源卡上移动的屏幕距离一致。
+    1.0 = 挪一个角色高度（角色高度 1.00 时正好一屏）。口径与「角色高度」一致：
+    角色高度用 size_units 表示，位移就是 size_units 的倍率。
+    旧版按「帧图像素」计，那时数值等于帧图边长才挪一个帧宽，换一张素材含义就变，
+    2026-11-21 改成本口径，不再依赖素材分辨率。
     """
-    return float(offset) * float(size_units) / float(frame_width)
+    return float(offset) * float(size_units)
+
+
+def screen_offsets(offx_pct, offy_pct, height, size_units: float):
+    """界面上的「左右移 / 上下移」（% 屏宽 / % 屏高）-> 骨骼单位。
+
+    不能按固定的「2880 单位 = 一屏」换算：骨架尺寸按来源卡的 Spine 物体缩放折算过
+    （实测 0.09~0.28，见 size_units 的算法），同一个单位数在不同卡上屏幕上差 2 倍。
+    这里用这张卡自己的「一屏高 = size_units / 角色高度」反推，百分比才落在屏幕上。
+    """
+    h = float(height or 0) or 1.0
+    per_screen_h = float(size_units) / h
+    return (float(offx_pct or 0) / 100.0 * per_screen_h * 16.0 / 9.0,
+            float(offy_pct or 0) / 100.0 * per_screen_h)
 
 
 def gen_skeleton(w: float, h: float, names, duration: float, pop=True, pop_curve=None,
@@ -1049,6 +1060,78 @@ def _normalize_page_materials(tx, card: int, quality: str, pages: int) -> int:
     return fixed
 
 
+def _cache_preview(ctx, card: int, scaled, duration: float, cell: int,
+                   size_units: float, mode: str, curve, pages: int,
+                   zoom: float = 1.0, offx: float = 0.0, offy: float = 0.0,
+                   rotate: float = 0.0) -> None:
+    """把这次生成的每一帧单独存一份，给软件内的动画预览读。
+
+    不去读游戏里的图集：高档两页 15360×15360 的 BC7 解成 RGBA 要 1.8 GB，预览打不开。
+    这里按帧从拼好的页上裁出来存 WebP，一张卡十几到三十几 MB。缓存跟账号走，
+    复原成功时由调用方一并删掉（所以同一张卡同时只会有一份）。
+
+    curve 传 None 表示这次没有弹出效果：播放器没有缩放曲线可用，就按恒等画。
+    （2026-11-22 用户发现：不勾「弹出」时界面照样把曲线传下来，缓存里也存了，
+    预览就凭空弹出一次，而游戏里没有。）
+    """
+    if ctx.dry_run:
+        return
+    try:
+        import numpy as np
+        from PIL import Image
+
+        from mdstudio.ops import preview as PV
+
+        root = PV.folder_of(ctx, card, PV.KIND_CUTIN)
+        root.mkdir(parents=True, exist_ok=True)
+        for old in root.glob("*.webp"):
+            old.unlink()
+        n = 0
+        w = h = 0
+        # 播放器按需解码，只留当前帧前后十几张，所以这里不必再为内存分档降分辨率。
+        # 900 长边在 2K 画布上刚好覆盖角色峰值高度。
+        limit = 900
+        for sheet, regions in scaled:
+            for _name, x, y, rw, rh in regions:
+                f = sheet.crop((x, y, x + rw, y + rh))
+                if f.mode != "RGBA":
+                    f = f.convert("RGBA")
+                # 图集里是预乘 alpha（pack_pages(premultiply=True)，曲线透明度也乘进去了），
+                # WebP 存的是直通 alpha。不反预乘的话淡入那几帧的 RGB 会被压低，
+                # 铺在浅色底上看着发白。
+                arr = np.asarray(f).astype(np.float32)
+                a = arr[..., 3:4] / 255.0
+                arr[..., :3] = np.where(a > 1e-4, arr[..., :3] / np.maximum(a, 1e-4), 0.0)
+                f = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
+                if max(f.size) > limit:
+                    k = limit / max(f.size)
+                    f = f.resize((max(1, round(f.width * k)), max(1, round(f.height * k))),
+                                 Image.LANCZOS)
+                f.save(root / f"{n:03d}.webp", "WEBP", quality=90, method=4)
+                w, h = f.size
+                n += 1
+        meta = {
+            "card": int(card), "frames": n, "width": w, "height": h,
+            "duration": round(float(duration), 3), "cell": int(cell),
+            # 放大倍数乘在骨架的缩放关键帧上，播放器要跟着放大，否则预览比游戏小一圈
+            "zoom": round(float(zoom), 3),
+            "size_units": round(float(size_units), 2), "mode": mode, "pages": int(pages),
+            # 左右移 / 上下移 / 旋转：界面填的就是「角色高度倍数」和角度，与骨骼同口径，
+            # 播放器按 drawH 乘一下就能对上游戏里的位置
+            "offx": round(float(offx or 0), 4),
+            "offy": round(float(offy or 0), 4),
+            "rotate": round(float(rotate or 0), 2),
+            "curve": [[float(a), float(b), float(c)] for a, b, c in (curve or [])],
+            "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        (root / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+        log.info(tr("P%s: wrote %s preview frame(s) for the in-app player"), card, n)
+    except Exception as e:
+        # 预览缓存写不出来不该让整次生成失败
+        log.warning(tr("P%s: could not write the preview frames (%s)"), card, e)
+
+
 def _retarget_animation(tx, card: int):
     """只写 HD 时，把动画引用从 SD 骨架改指 HD 骨架。
 
@@ -1147,10 +1230,13 @@ def _restore_sd(tx, card: int) -> int:
 def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mode="full",
           sharp=False, pop=None, donor=None, sd_scale=0.5, preview_dir=None,
           pop_curve=None, offset_x=0.0, offset_y=0.0, zoom=1.0, rotate=0.0,
-          sharp_model="realesr-animevideov3", force=False, sharp_scale=4, compat_sd=None):
-    """size = skeleton 宽. None: full = 4800 (铺满屏), 其他 = 2930 (1440p 上峰值约 110% 屏高)
+          sharp_model="realesr-animevideov3", force=False, sharp_scale=4, compat_sd=None,
+          offx_pct=None, offy_pct=None, height=None):
+    """size = skeleton 宽. None: full = 4800 (铺满屏), 其他 = 2880 (角色高度 = 1.00 屏高)
     pop None: full 不弹 (Phainon 那样整屏不动), 其他照官方弹出放大
-    compat_sd None: 读设置里的「低清纹理兼容」, 界面与命令行都不用每次传"""
+    compat_sd None: 读设置里的「低清纹理兼容」, 界面与命令行都不用每次传
+    位移两种给法: offx_pct/offy_pct (% 屏宽 / % 屏高, 界面用, 要同时给 height = 角色高度)
+                 或 offset_x/offset_y (角色高度倍数, CLI 与 PySide 旧界面用)"""
     # 来源卡（无动画卡的克隆底盘）不允许改：它的页数与材质槽会被后来克隆的卡继承，
     # 改过之后那些卡会跟着漂到不匹配的结构。复原不受这条限制。
     if C.is_donor_card(card):
@@ -1173,7 +1259,7 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
     # 不在这里转一下的话, 后面会拿字符串当关键帧表用, 报 float 和 str 不能比较
     if isinstance(pop_curve, str):
         pop_curve = parse_pop_curve(pop_curve) if pop_curve.strip() else None
-    size = size or (FULL_SIZE if mode == "full" else 2930)
+    size = size or (FULL_SIZE if mode == "full" else 2880)
     pop = (mode != "full") if pop is None else pop
     # 没给曲线就用默认那条（用户自己设计的那套）。界面「效果」下拉里的「默认」就是它，
     # 所以这里兜底之后，弹出一律按曲线走，不再有「官方硬编码曲线」这个隐藏分支。
@@ -1190,24 +1276,16 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
     # 所以重复生成不会再掉进这个分支。
     if not cloned and C.borrowed(ctx, card):
         raise MDStudioError(tr("%s has a borrowed cut-in. Remove it, the video needs its own clone.") % card)
-    # 已经克隆过的卡，底盘就是它自己那一套（克隆时骨架、图集、Timeline 都复制了一份）。
-    # 动画名和缩放必须按自己的底盘读：否则用户在来源卡框里改一张，名字会对不上，
-    # 缩放系数变了还会让人物在屏幕上突然大一圈。想换底盘得先复原。
-    # 卡自己就有官方召唤动画时，底盘就是它自己的那一套，原地改，不克隆别人的。
-    # 克隆会把 prefab、Timeline、相机一起换掉，官方演出结构就没了；原地改只换
-    # 骨架、图集、贴图，材料槽不够时由 _add_texture_page 补。
+    # 已经克隆过的卡（整合包装进来的副本）本来就没有官方那一套可以「原地写」，
+    # 它的 P<卡> 就是一份副本，直接往里写；没克隆过的一律克隆来源卡。
+    # 底盘策略（2026-11-22 用户定稿）：三档统一克隆来源卡，官方动画也克隆。
+    # 克隆出来的页材质天然是标准 shader，省掉「官方特效页把帧烧成白黄闪光」那一类问题
+    # （全库 80/525 张有非标准页材质，第 1 页就异常的 6 张）。代价是 prefab、相机、
+    # Timeline 分镜换成来源卡的，想换回来先复原。
+    # 例外：已经是我们自己那一套的卡（整合包装进来的副本）直接原地写，不重复克隆。
     from mdstudio.core.catalog import Catalog
-    from mdstudio.core.gate import CutinGate
     pre = Catalog(ctx.game)
-    own_chassis = int(card) in CutinGate(ctx.game).mrks()
-    if own_chassis and not cloned and not C.asset_paths(pre, card, C.HD):
-        # 有官方动画、但高清那一档没有可替换的整套资源（#7302 的高清目录里只有贴图，
-        # 没有 prefab；#13090 连条目都没有）。原地改无从下手，按「没有自己的底盘」处理，
-        # 给它克隆一套来源卡的。不这么做的话后面会只改动画引用和窗口，骨架与贴图一笔
-        # 没写，用户进游戏看到的还是官方动画（2026-11-19 实测 7302）。
-        own_chassis = False
-        log.info(tr("P%s: its own cut-in has no HD resources to swap, cloning one"), card)
-    chassis = int(card) if (cloned or own_chassis) else donor
+    chassis = int(card) if cloned else donor
     # 来源卡的 Spine 物体缩放不一样（实测 0.13~0.22），按 0.20 基准折算骨架尺寸，
     # 这样同一个「角色尺寸」在任何来源卡上都占同样大：屏幕像素 = 尺寸 × 屏宽/5000
     # （七张来源卡的 prefab 相机都是 camera2DSize 5.0，只有物体缩放不同）。
@@ -1271,15 +1349,15 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
             F.preview_dark(sh, True).save(f"{preview_dir}/preview_dark{'' if i == 0 else f'_{i + 1}'}.png")
     names = [r[0] for _, rs in sheets for r in rs]
     pages = len(sheets)
-    # 底盘页数不够就换一张双页来源卡。#21382 这类自带官方动画的卡，官方那套只有一页
-    # 贴图（P<卡>_Atlas 里只有一个材质槽），两页序列帧写不进去。材质槽烘在资源里加不
-    # 出来，只能改用双页来源卡克隆一份。只写 HD 时只查 HD 的页数。
+    # 底盘页数不够就换一张双页来源卡。走到这里的只有「已经是我们自己那套」的卡
+    # （整合包装进来的副本），它可能只有一页贴图槽，两页序列帧写不进去。材质槽烘在
+    # 资源里加不出来，只能改用双页来源卡克隆一份。只写 HD 时只查 HD 的页数。
     want_q = [C.HD] + ([C.SD] if compat_sd else [])
     short = [q for q in want_q if C.chassis_pages(pre, chassis, q) < pages]
     expand_qs = set()
     if short and chassis == card:
-        # 自己的底盘页数不够：给它补页，不换模板。prefab / Timeline / 相机全部保留，
-        # 官方那套演出结构不动，只把缺失的贴图页和材质槽补上（见 _add_texture_page）。
+        # 自己那份页数不够：给它补页，不换模板。prefab / Timeline / 相机全部保留，
+        # 只把缺失的贴图页和材质槽补上（见 _add_texture_page）。
         if pages > 2:
             raise MDStudioError(tr("P%s only has %s texture page(s); %s frames need %s pages. "
                                    "Use fewer frames or a smaller size.")
@@ -1297,15 +1375,22 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
         size_units = float(size) * (C.DONOR_BASE_SCALE / C.donor_scale(ctx.game, chassis))
     w = size_units
     anim_name = donor_anim_name(ctx.game, chassis)
+    # 位移统一先落成骨骼单位；预览缓存仍记「角色高度倍数」（= 单位数 / w），
+    # 这样播放器那套 posX = 中心 + offx × size_units 不用跟着改。
+    if offx_pct is None and offy_pct is None:
+        ox_units, oy_units = offset_to_units(offset_x, w), offset_to_units(offset_y, w)
+    else:
+        ox_units, oy_units = screen_offsets(offx_pct, offy_pct, height, w)
+    offx_mult, offy_mult = (ox_units / w if w else 0.0), (oy_units / w if w else 0.0)
     skel = gen_skeleton(w, w * fh / fw, names, duration, pop, pop_curve,
-                        ox=offset_to_units(offset_x, w, fw), oy=offset_to_units(offset_y, w, fw),
+                        ox=ox_units, oy=oy_units,
                         zoom=float(zoom),
                         rot=float(rotate), anim_name=anim_name)
 
     # 克隆与替换并进同一条记录：分开提交会让历史里出现「克隆召唤动画」和
     # 「视频召唤动画」两行，看起来像做了两次（2026-11-12 用户实测）。
     tx = Tx(ctx, "cutin.video", card)
-    if not cloned and not own_chassis:
+    if not cloned:
         log.info(tr("cloning %s from %s first"), card, donor)
         C.clone(ctx, card, donor, force=force, tx=tx)
         if ctx.dry_run:
@@ -1421,6 +1506,12 @@ def apply(ctx, card: int, source, n=120, cell=1080, duration=4.8, size=None, mod
                                        "sheet needs %s. Use fewer frames or a smaller frame size.")
                                     % (len(pages_lp), q, len(scaled)))
             tx.put_file(h, fn(data))
+        if q == C.HD:
+            # 只按高清档存一份，预览画布用的是高清那套帧。
+            # 没勾「弹出」时 curve 传 None：游戏里没有缩放动画，预览也不该有。
+            _cache_preview(ctx, card, scaled, round(duration, 3), cell, size_units,
+                           mode, (pop_curve if pop else None), len(sheets), float(zoom),
+                           offx_mult, offy_mult, float(rotate or 0))
     # 窗口严格等于动画时长。官方卡的共同点是 clip 长度等于骨架动画末帧时间
     # （14952 是 1.6 对 1.6，3881 也是），窗口多给的那一截会被 loop 填上，
     # 看得出来的是「动作重复」。这里只改 clip 长度，不动 m_FixedDuration。

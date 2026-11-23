@@ -172,10 +172,31 @@ public sealed partial class SharePage : Page
             data.TryGetProperty("path", out var p) && p.GetString() is { } path)
         {
             SetStatus("已导出到 " + path);
+            var skipped = DescribeSkipped(data);
             await Dialogs.InfoAsync(XamlRoot, "导出完成",
                 $"{cards.Count} 张卡，{nCutin + nRunfx + nArt} 条内容。",
-                danger: false, cardName: null, cardMeta: null, note: path);
+                danger: false, cardName: null, cardMeta: null,
+                note: skipped.Length > 0 ? $"{skipped}\n{path}" : path);
         }
+    }
+
+    /// <summary>把后端跳过的条目翻成一句人话。没有跳过就是空串。</summary>
+    private static string DescribeSkipped(JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object ||
+            !data.TryGetProperty("skipped", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return "";
+        int fusion = 0, missing = 0;
+        foreach (var item in arr.EnumerateArray())
+        {
+            string why = item.TryGetProperty("why", out var w) ? w.GetString() ?? "" : "";
+            if (why == "fusion") fusion++;
+            else missing++;
+        }
+        var parts = new List<string>();
+        if (fusion > 0) parts.Add($"{fusion} 张是融合召唤演出，改了不会播，已跳过");
+        if (missing > 0) parts.Add($"{missing} 张的依赖文件已不在盘上，先复原或重新生成");
+        return parts.Count > 0 ? "另有 " + string.Join("；", parts) + "。" : "";
     }
 
     /// <summary>没填名字时的默认名：导出(动画+2、特效+1)_20261111_154712。</summary>
@@ -387,11 +408,17 @@ public sealed partial class SharePage : Page
         // 覆盖了你自己之前改动的条目数：让用户知道覆盖发生过（旧版本有备份，可在对应页面复原找回）
         var nOver = installed.ValueKind == JsonValueKind.Object &&
                     installed.TryGetProperty("overwritten", out var ov) ? ov.GetInt32() : 0;
+        var skipNote = DescribeSkipped(installed);
         if (nOver > 0)
             await Dialogs.InfoAsync(XamlRoot, "安装完成",
                 $"有 {nOver} 条覆盖了你之前做过的改动。",
                 cardName: null, cardMeta: null,
-                note: "被覆盖的版本已自动备份，可在对应页面复原找回。");
+                note: skipNote.Length > 0
+                    ? $"{skipNote}\n被覆盖的版本已自动备份，可在对应页面复原找回。"
+                    : "被覆盖的版本已自动备份，可在对应页面复原找回。");
+        else if (skipNote.Length > 0)
+            await Dialogs.InfoAsync(XamlRoot, "安装完成",
+                "部分内容没有装。", cardName: null, cardMeta: null, note: skipNote);
     }
 
     private static string StateText(string s) => s switch

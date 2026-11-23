@@ -192,7 +192,12 @@ public sealed partial class CardArtPage : Page
 
     private async Task SearchAsync(string q)
     {
-        if (App.Engine is not { } engine) return;
+        // 引擎没起来时把进页时挂上的忙碌状态收掉，否则进度条一直转
+        if (App.Engine is not { } engine)
+        {
+            SetBusy(false, null);
+            return;
+        }
 
         _searchCts?.Cancel();
         var cts = new CancellationTokenSource();

@@ -3,6 +3,7 @@ using MDStudio.Services;
 using Windows.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.Storage.Pickers;
@@ -44,11 +45,43 @@ public sealed partial class SettingsPage : Page
         InitializeComponent();
         SettingsScroller.SizeChanged += (_, _) => SyncBodyWidth();
         ActualThemeChanged += (_, _) => RenderStats();
+        // 折叠默认收起，只留第一项；链接文字按剩余项数算，加项后不用改
+        SetAdvancedOpen(false);
         Unloaded += (_, _) =>
         {
             App.DryRunChanged -= OnDryRunChanged;
             App.MainBusyChanged -= OnMainBusy;
         };
+    }
+
+    private bool _advancedOpen;
+
+    private void AdvancedToggle_Click(object sender, RoutedEventArgs e) => SetAdvancedOpen(!_advancedOpen);
+
+    private void SetAdvancedOpen(bool open)
+    {
+        _advancedOpen = open;
+        AdvancedRest.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        int rest = AdvancedRest.Children.Count;
+        // 两块卡片的折叠说法保持一致：标题后面一个「还有 N 项」/「收起」
+        AdvancedMoreBtn.Visibility = rest > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (rest > 0) AdvancedMoreBtn.Content = MorePill(open, rest);
+    }
+
+    /// <summary>折叠按钮的内容：未展开写「还有 N 项」，展开了写「收起」，箭头跟着翻。</summary>
+    private static StackPanel MorePill(bool open, int rest)
+    {
+        var text = new TextBlock { Text = open ? "收起" : $"还有 {rest} 项", FontSize = 12 };
+        var glyph = new FontIcon
+        {
+            Glyph = open ? "\uE70E" : "\uE70D",
+            FontSize = 10,
+            Margin = new Thickness(5, 0, 0, 0),
+        };
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        panel.Children.Add(text);
+        panel.Children.Add(glyph);
+        return panel;
     }
 
     /// <summary>标题栏徽标关掉预演时，把这里的开关同步过来。</summary>
@@ -60,11 +93,8 @@ public sealed partial class SettingsPage : Page
     private const string BusyHint = "有动作在跑，完成前不能切换账号或更改游戏目录。";
 
     /// <summary>低清兼容那行说明的两种文案。空闲时讲它做什么，跑任务时讲为什么点不了。</summary>
-    private const string SdHintIdle =
-        "生成召唤动画时，低清（SD）贴图也一起重写。只写单页贴图，超出上限会提示。"
-        + "关掉后再生成，低清那份恢复成官方；整合包里开与不开的卡混装时，"
-        + "只有开了的卡在低画质下生效。";
-    private const string SdHintBusy = "生成进行中，暂时不能改这个设置。";
+    private const string SdHintIdle = "低清贴图一并重写，关掉沿用官方。";
+    private const string SdHintBusy = "生成进行中，暂时不能改。";
 
     /// <summary>主任务槽进出：跑动作时锁住账号与目录，别让用户切到一半。</summary>
     private void OnMainBusy()
@@ -97,6 +127,517 @@ public sealed partial class SettingsPage : Page
             SettingsBody.Width = target;
     }
 
+    private sealed record PreviewRow(string Kind, int Card, string Name, int Frames, long Bytes);
+
+    private static string FmtBytes(long b)
+        => b >= 1L << 30 ? $"{b / 1073741824.0:0.00} GB"
+         : b >= 1L << 20 ? $"{b / 1048576.0:0.0} MB"
+         : $"{Math.Max(0, b) / 1024} KB";
+
+    private async Task<List<PreviewRow>> LoadPreviewRowsAsync()
+    {
+        var rows = new List<PreviewRow>();
+        if (App.Engine is not { } engine) return rows;
+        try
+        {
+            var data = await engine.CallAsync("preview.list");
+            if (data.ValueKind != JsonValueKind.Array) return rows;
+            foreach (var it in data.EnumerateArray())
+            {
+                int card = it.TryGetProperty("card", out var c) ? c.GetInt32() : 0;
+                if (card <= 0) continue;
+                var kind = it.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String
+                    ? (k.GetString() ?? "cutin") : "cutin";
+                rows.Add(new PreviewRow(kind, card,
+                    it.TryGetProperty("name", out var n) ? (n.GetString() ?? "") : "",
+                    it.TryGetProperty("frames", out var f) ? f.GetInt32() : 0,
+                    it.TryGetProperty("bytes", out var b) ? b.GetInt64() : 0));
+            }
+        }
+        catch
+        {
+            // 读不到就当没有缓存，不打扰用户
+        }
+        return rows;
+    }
+
+    private async Task RefreshPreviewCacheAsync()
+    {
+        var rows = await LoadPreviewRowsAsync();
+        long total = 0;
+        foreach (var r in rows) total += r.Bytes;
+        PreviewCacheTotal.Text = FmtBytes(total);
+        // 到 10 GB 标红（2026-11-20 定稿）
+        bool heavy = total >= 10L * 1024 * 1024 * 1024;
+        PreviewCacheTotal.Foreground = heavy
+            ? Res("SystemFillColorCriticalBrush")
+            : Res("TextFillColorSecondaryBrush");
+    }
+
+    /// <summary>
+    /// 按当前主题取 ThemeDictionaries 里的画刷。
+    /// Application.Resources 的索引器不解主题，直接用会拿到空值或浅色那份。
+    /// </summary>
+    private Brush? ThemeBrush(string key)
+    {
+        var themes = Application.Current.Resources.ThemeDictionaries;
+        var name = ActualTheme == ElementTheme.Dark ? "Dark" : "Light";
+        if (themes.TryGetValue(name, out var d) && d is ResourceDictionary dict
+            && dict.TryGetValue(key, out var v) && v is Brush b)
+            return b;
+        return Application.Current.Resources.TryGetValue(key, out var v2) && v2 is Brush b2
+            ? b2 : null;
+    }
+
+    private static Brush Res(string key)
+        => Application.Current.Resources.TryGetValue(key, out var v) && v is Brush b
+            ? b
+            : new SolidColorBrush(Microsoft.UI.Colors.Gray);
+
+    /// <summary>管理弹窗是不是已经开着了。开着的这段时间，后面的点击一律不理。</summary>
+    private bool _previewDlgOpen;
+
+    /// <summary>
+    /// 管理按钮的入口。真正的内容在 <see cref="ShowPreviewCacheDialogAsync"/> 里。
+    ///
+    /// 包一层是为了挡住连点：同一个 XamlRoot 同时只允许一个 ContentDialog，
+    /// 第二次 ShowAsync 会抛 InvalidOperationException，而 async void 里抛出来没人接，
+    /// 整个进程直接退出（2026-11-21 用户首次启动时复现，事件日志 0xc000027b）。
+    /// 首次启动要建卡片索引，界面卡住的那几秒点击会叠加排队，一放开就一起执行，最容易撞上。
+    /// </summary>
+    private async void PreviewCacheManage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_previewDlgOpen) return;
+        _previewDlgOpen = true;
+        // 引擎忙时 preview.list 要等一会儿，按钮上给个反馈，免得用户以为没点上又点一次
+        PreviewCacheManageBtn.IsEnabled = false;
+        PreviewCacheManageBtn.Content = "读取中…";
+        try
+        {
+            await ShowPreviewCacheDialogAsync();
+        }
+        catch (Exception ex)
+        {
+            // 到这里说明弹窗没开成。记进运行日志，界面上不能因为一个弹窗把进程带走
+            App.AddLog("ERROR", "预览缓存管理打不开：" + ex);
+        }
+        finally
+        {
+            _previewDlgOpen = false;
+            PreviewCacheManageBtn.Content = "管理";
+            PreviewCacheManageBtn.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// 预览缓存管理：搜索、勾选、批量删除。
+    /// 列表右侧留 14 的通道给滚动条，否则条会压在删除按钮上。
+    /// 批量删除的确认做成弹窗里的确认条，不叠第二个对话框：同一个 XamlRoot 同时只能开一个。
+    /// </summary>
+    private async Task ShowPreviewCacheDialogAsync()
+    {
+        if (XamlRoot is null) return;
+        if (App.Engine is not { } engine) return;
+
+        var rows = new List<PreviewRow>();
+        // 同一张卡可以同时有动画和特效两份，所以选中项按「类型:卡号」记
+        var picked = new HashSet<string>();
+        static string KeyOf(PreviewRow r) => $"{r.Kind}:{r.Card}";
+        var filter = "";
+        // 类型筛选："" 全部 / "cutin" 动画 / "runfx" 特效
+        string kindFilter = "";
+        var syncing = false;
+
+        var summary = new TextBlock
+        {
+            Style = Res<Style>("CaptionTextBlockStyle"),
+            Foreground = Res<Brush>("TextFillColorSecondaryBrush"),
+        };
+
+        // 不写死宽度：显式 Width 会让它在 * 列里居中，左沿跟下面的列表框对不上
+        var search = new TextBox
+        {
+            PlaceholderText = "搜索卡名或卡号",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var pickAll = new CheckBox
+        {
+            Content = "全选",
+            MinWidth = 0,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var delPicked = new Button
+        {
+            Content = "删除所选",
+            MinHeight = 30,
+            Padding = new Thickness(12, 3, 12, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = Res<Brush>("SystemFillColorCriticalBackgroundBrush"),
+            Foreground = Res<Brush>("SystemFillColorCriticalBrush"),
+            BorderThickness = new Thickness(0),
+        };
+
+        var toolbar = new Grid { ColumnSpacing = 10 };
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        toolbar.Children.Add(search);
+        Grid.SetColumn(pickAll, 1);
+        toolbar.Children.Add(pickAll);
+        Grid.SetColumn(delPicked, 2);
+        toolbar.Children.Add(delPicked);
+
+        var confirmText = new TextBlock
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var confirmYes = new Button
+        {
+            Content = "删除",
+            MinHeight = 30,
+            Padding = new Thickness(14, 3, 14, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = Res<Brush>("SystemFillColorCriticalBackgroundBrush"),
+            Foreground = Res<Brush>("SystemFillColorCriticalBrush"),
+            BorderThickness = new Thickness(0),
+        };
+        var confirmNo = new Button
+        {
+            Content = "取消",
+            MinHeight = 30,
+            Padding = new Thickness(14, 3, 14, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var confirmBar = new Grid { ColumnSpacing = 10, Visibility = Visibility.Collapsed };
+        confirmBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        confirmBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        confirmBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        confirmBar.Children.Add(confirmText);
+        Grid.SetColumn(confirmNo, 1);
+        confirmBar.Children.Add(confirmNo);
+        Grid.SetColumn(confirmYes, 2);
+        confirmBar.Children.Add(confirmYes);
+
+        var listHost = new StackPanel();
+        var listScroll = new ScrollViewer
+        {
+            Content = listHost,
+            MaxHeight = 360,
+            Padding = new Thickness(0, 0, 14, 0),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+        var listFrame = new Border
+        {
+            BorderBrush = Res<Brush>("CardStrokeColorDefaultBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Child = listScroll,
+        };
+
+        var root = new StackPanel { Spacing = 12, Width = 660 };
+        root.Children.Add(summary);
+        root.Children.Add(toolbar);
+        root.Children.Add(confirmBar);
+        root.Children.Add(listFrame);
+
+        static bool MatchRow(PreviewRow r, string q, string kind)
+        {
+            if (kind.Length > 0 && r.Kind != kind) return false;
+            if (q.Length == 0) return true;
+            var t = q.TrimStart('#').Trim();
+            if (t.Length == 0) return true;
+            return r.Card.ToString().Contains(t)
+                || r.Name.Contains(t, StringComparison.OrdinalIgnoreCase);
+        }
+
+        List<PreviewRow> VisibleRows()
+        {
+            var list = new List<PreviewRow>();
+            foreach (var r in rows)
+                if (MatchRow(r, filter, kindFilter)) list.Add(r);
+            return list;
+        }
+
+        void SyncPicked()
+        {
+            var visible = VisibleRows();
+            int n = 0;
+            foreach (var r in visible)
+                if (picked.Contains(KeyOf(r))) n++;
+            syncing = true;
+            pickAll.IsChecked = visible.Count > 0 && n == visible.Count;
+            syncing = false;
+            delPicked.Content = picked.Count > 0 ? $"删除所选 {picked.Count} 项" : "删除所选";
+            delPicked.IsEnabled = picked.Count > 0;
+            delPicked.Opacity = picked.Count > 0 ? 1 : 0.5;
+        }
+
+        FrameworkElement BuildRow(PreviewRow r, bool last)
+        {
+            var line = new Grid
+            {
+                ColumnSpacing = 10,
+                MinHeight = 40,
+                Padding = new Thickness(10, 0, 6, 0),
+            };
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(66) });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var box = new CheckBox
+            {
+                MinWidth = 0,
+                Margin = new Thickness(0),
+                VerticalAlignment = VerticalAlignment.Center,
+                IsChecked = picked.Contains(KeyOf(r)),
+            };
+            box.Checked += (_, _) =>
+            {
+                if (syncing) return;
+                picked.Add(KeyOf(r));
+                SyncPicked();
+            };
+            box.Unchecked += (_, _) =>
+            {
+                if (syncing) return;
+                picked.Remove(KeyOf(r));
+                SyncPicked();
+            };
+
+            // 卡号单独一列、等宽字体：异画同名时靠它区分，名字再长也只截名字
+            var idText = new TextBlock
+            {
+                Text = $"#{r.Card}",
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 12,
+                Foreground = Res<Brush>("TextFillColorSecondaryBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            var name = new TextBlock
+            {
+                Text = string.IsNullOrEmpty(r.Name) ? "（没有卡名）" : r.Name,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            // 同一张卡的两类缓存各占一行，靠这个小徽标区分
+            bool fx = r.Kind == "runfx";
+            var kindChip = new Border
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(6, 1, 6, 1),
+                // 与历史页的四档配色同一套：动画浅紫、特效浅青，跨页面看起来是同一个东西
+                Background = ThemeBrush(fx ? "HistBadgeFx" : "HistBadgeAnim"),
+                Child = new TextBlock
+                {
+                    Text = fx ? "特效" : "动画",
+                    FontSize = 11,
+                    Foreground = ThemeBrush(fx ? "HistTextFx" : "HistTextAnim"),
+                },
+            };
+
+            var meta = new TextBlock
+            {
+                Text = $"{r.Frames} 帧 · {FmtBytes(r.Bytes)}",
+                FontSize = 12,
+                Foreground = Res<Brush>("TextFillColorSecondaryBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            var del = new Button
+            {
+                Content = "删除",
+                MinHeight = 28,
+                Padding = new Thickness(8, 0, 8, 0),
+                FontSize = 12,
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Foreground = Res<Brush>("SystemFillColorCriticalBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            del.Click += async (_, _) =>
+            {
+                try
+                {
+                    await engine.CallAsync("preview.drop", new { card = r.Card, kind = r.Kind });
+                }
+                catch
+                {
+                    // 删不掉就照旧，重建列表时如实显示
+                }
+                await ReloadAsync();
+            };
+
+            line.Children.Add(box);
+            Grid.SetColumn(idText, 1);
+            line.Children.Add(idText);
+            Grid.SetColumn(name, 2);
+            line.Children.Add(name);
+            Grid.SetColumn(kindChip, 3);
+            line.Children.Add(kindChip);
+            Grid.SetColumn(meta, 4);
+            line.Children.Add(meta);
+            Grid.SetColumn(del, 5);
+            line.Children.Add(del);
+
+            return new Border
+            {
+                Child = line,
+                BorderBrush = Res<Brush>("DividerStrokeColorDefaultBrush"),
+                BorderThickness = last ? new Thickness(0) : new Thickness(0, 0, 0, 1),
+            };
+        }
+
+        void Render()
+        {
+            var visible = VisibleRows();
+            long sum = 0;
+            foreach (var r in rows) sum += r.Bytes;
+            int cutCount = 0;
+            foreach (var r in rows) if (r.Kind != "runfx") cutCount++;
+            var head = rows.Count == 0
+                ? "还没有预览缓存。生成一张卡的动画或特效后就会出现。"
+                : $"共 {rows.Count} 项（动画 {cutCount}、特效 {rows.Count - cutCount}），合计 {FmtBytes(sum)}";
+            summary.Text = filter.Length > 0 ? $"{head} · 筛出 {visible.Count} 项" : head;
+
+            listHost.Children.Clear();
+            if (visible.Count == 0)
+            {
+                listHost.Children.Add(new TextBlock
+                {
+                    Text = rows.Count == 0 ? "这里会列出已生成的预览缓存。" : "没有匹配的卡。",
+                    Margin = new Thickness(14, 22, 14, 22),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Style = Res<Style>("CaptionTextBlockStyle"),
+                    Foreground = Res<Brush>("TextFillColorSecondaryBrush"),
+                });
+            }
+            else
+            {
+                for (int i = 0; i < visible.Count; i++)
+                    listHost.Children.Add(BuildRow(visible[i], i == visible.Count - 1));
+            }
+            SyncPicked();
+        }
+
+        // 类型筛选：全部 / 动画 / 特效，三枚互斥胶囊。与搜索叠加，全选只作用于当前结果。
+        ToggleButton Chip(string text, bool on) => new()
+        {
+            Content = text,
+            MinHeight = 28,
+            Padding = new Thickness(12, 2, 12, 2),
+            FontSize = 12,
+            IsChecked = on,
+        };
+        var chipAll = Chip("全部", true);
+        var chipCutin = Chip("动画", false);
+        var chipFx = Chip("特效", false);
+        var chipRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        chipRow.Children.Add(chipAll);
+        chipRow.Children.Add(chipCutin);
+        chipRow.Children.Add(chipFx);
+
+        void SetKind(string kind, ToggleButton active)
+        {
+            kindFilter = kind;
+            // 点已选中那枚时 ToggleButton 会自己取消勾选，这里按状态重设一遍
+            chipAll.IsChecked = ReferenceEquals(active, chipAll);
+            chipCutin.IsChecked = ReferenceEquals(active, chipCutin);
+            chipFx.IsChecked = ReferenceEquals(active, chipFx);
+            Render();
+        }
+
+        chipAll.Click += (_, _) => SetKind("", chipAll);
+        chipCutin.Click += (_, _) => SetKind("cutin", chipCutin);
+        chipFx.Click += (_, _) => SetKind("runfx", chipFx);
+        root.Children.Insert(1, chipRow);
+
+        async Task ReloadAsync()
+        {
+            rows = await LoadPreviewRowsAsync();
+            var alive = new HashSet<string>();
+            foreach (var r in rows) alive.Add(KeyOf(r));
+            picked.RemoveWhere(c => !alive.Contains(c));
+            Render();
+        }
+
+        search.TextChanged += (_, _) =>
+        {
+            filter = search.Text.Trim();
+            Render();
+        };
+
+        pickAll.Checked += (_, _) =>
+        {
+            if (syncing) return;
+            foreach (var r in VisibleRows()) picked.Add(KeyOf(r));
+            Render();
+        };
+        pickAll.Unchecked += (_, _) =>
+        {
+            if (syncing) return;
+            foreach (var r in VisibleRows()) picked.Remove(KeyOf(r));
+            Render();
+        };
+
+        delPicked.Click += (_, _) =>
+        {
+            if (picked.Count == 0) return;
+            confirmText.Text = $"确认删除 {picked.Count} 份预览缓存？动画和特效本身不受影响，软件里要重新生成才有预览。";
+            toolbar.Visibility = Visibility.Collapsed;
+            confirmBar.Visibility = Visibility.Visible;
+        };
+        confirmNo.Click += (_, _) =>
+        {
+            confirmBar.Visibility = Visibility.Collapsed;
+            toolbar.Visibility = Visibility.Visible;
+        };
+        confirmYes.Click += async (_, _) =>
+        {
+            confirmBar.Visibility = Visibility.Collapsed;
+            toolbar.Visibility = Visibility.Visible;
+            var cards = rows.Where(r => picked.Contains(KeyOf(r)))
+                            .Select(r => (r.Card, r.Kind)).ToList();
+            foreach (var c in cards)
+            {
+                try
+                {
+                    await engine.CallAsync("preview.drop", new { card = c.Card, kind = c.Kind });
+                }
+                catch
+                {
+                    // 单张失败不影响其余，最后重建列表时如实反映
+                }
+            }
+            await ReloadAsync();
+        };
+
+        var dlg = new ContentDialog
+        {
+            Title = "预览缓存",
+            Content = root,
+            CloseButtonText = "关闭",
+            XamlRoot = XamlRoot,
+        };
+        // 内容宽度被主题资源 ContentDialogMaxWidth（默认 548）卡住，设 MaxWidth 属性没用，
+        // 得在对话框自己的资源里盖掉这个键
+        dlg.Resources["ContentDialogMaxWidth"] = 760d;
+        dlg.Resources["ContentDialogMaxHeight"] = 720d;
+
+        await ReloadAsync();
+        await dlg.ShowAsync();
+        await RefreshPreviewCacheAsync();
+    }
+
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
@@ -108,6 +649,8 @@ public sealed partial class SettingsPage : Page
         App.MainBusyChanged -= OnMainBusy;
         App.MainBusyChanged += OnMainBusy;
         OnMainBusy();
+        // 预览缓存的合计只读一个目录，毫秒级，不占启动时间
+        _ = RefreshPreviewCacheAsync();
         if (_loaded)
         {
             // 版本号与四项统计都会被别的页面改掉（生成、复原、装包），回来时补一次。
@@ -803,17 +1346,7 @@ public sealed partial class SettingsPage : Page
             return;
         }
         AssetsMoreBtn.Visibility = Visibility.Visible;
-        var text = new TextBlock { Text = on ? "收起" : $"还有 {_rows.Count - 1} 项", FontSize = 12 };
-        var glyph = new FontIcon
-        {
-            Glyph = on ? "\uE70E" : "\uE70D",
-            FontSize = 10,
-            Margin = new Thickness(5, 0, 0, 0),
-        };
-        var panel = new StackPanel { Orientation = Orientation.Horizontal };
-        panel.Children.Add(text);
-        panel.Children.Add(glyph);
-        AssetsMoreBtn.Content = panel;
+        AssetsMoreBtn.Content = MorePill(on, _rows.Count - 1);
     }
 
     private async Task CancelDownloadAsync()

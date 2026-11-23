@@ -57,3 +57,73 @@ def test_old_undo_still_replays_from_ops():
     assert arch[0]["from"] == "" and arch[0]["undoable"] is False
     undo = next(x for x in out if x["op"] == "undo")
     assert out.index(undo) < out.index(arch[0])
+
+
+def test_old_undo_skips_sound_when_replaying_ops():
+    """旧留痕里混着音效 op 时，回放要挑非音效的那条：音效不算一条历史。"""
+    r = _undo(ops=("runfx.video", "sound.custom"))
+    out = _backend([r]).history_list()["records"]
+    arch = [x for x in out if x.get("archived")]
+    assert len(arch) == 1 and arch[0]["op"] == "runfx.video"
+
+
+def test_archived_list_replays_every_op():
+    """新格式：archived 是一张卡的列表，每种 op 都要展开成一行。"""
+    archived = [
+        {"op": "cutin.video", "time": 800.0, "meta": {"source": "hero.mp4", "files": 18}},
+        {"op": "overframe.set", "time": 600.0, "meta": {"files": 1}},
+    ]
+    r = _undo(card=10001, archived=archived, ops=("cutin.video", "overframe.set"))
+    r.meta["kind"] = "cutin"
+    out = _backend([r]).history_list()["records"]
+    arch = [x for x in out if x.get("archived")]
+    assert [x["op"] for x in arch] == ["overframe.set", "cutin.video"]   # 新的在前
+    assert len({x["id"] for x in out}) == len(out)                        # id 不撞
+    undo = next(x for x in out if x["op"] == "undo")
+    assert out.index(undo) < out.index(arch[0])
+
+
+def test_old_single_archive_backfills_missing_ops():
+    """老留痕只存了音效那条摘要：ops 里剩下的特效要补出来，音效不补。"""
+    r = _undo(card=22159, ops=("runfx.video", "sound.custom"),
+              archived={"op": "sound.custom", "time": 901.0,
+                        "meta": {"label": "SE_EV_CUSTOM22159", "files": 1}})
+    r.meta["kind"] = "runfx"
+    out = _backend([r]).history_list()["records"]
+    arch = [x for x in out if x.get("archived")]
+    assert [x["op"] for x in arch] == ["runfx.video"]
+
+
+def _rec(op, card=22159, t=900.0, files=1, meta=None):
+    r = Record(op, card)
+    r.time = t
+    r.created = [f"{i:032x}" for i in range(files)]
+    r.meta = meta or {}
+    return r
+
+
+def test_summaries_keep_each_op_but_drop_sound():
+    """「视频特效 + 音效」一起复原：只留特效那条，文件数仍按两条算。"""
+    from mdstudio.ops.tx import undo_summaries
+
+    out = undo_summaries([
+        _rec("runfx.video", t=100.0, files=1, meta={"donor": 3880}),
+        _rec("sound.custom", t=200.0, files=1, meta={"label": "SE_EV_CUSTOM22159"}),
+    ])
+    c = out[22159]
+    assert [a["op"] for a in c["archived"]] == ["runfx.video"]
+    assert c["files"] == 2 and c["kind"] == "runfx"
+    assert c["ops"] == ["runfx.video", "sound.custom"]
+
+
+def test_summaries_keep_two_distinct_ops():
+    """同卡两种改动（动画 + 超框）各留一条，按时间排。"""
+    from mdstudio.ops.tx import undo_summaries
+
+    out = undo_summaries([
+        _rec("overframe.set", t=300.0),
+        _rec("cutin.video", t=200.0, meta={"sha": {"a": 1, "b": 2}}),
+    ])
+    c = out[22159]
+    assert [a["op"] for a in c["archived"]] == ["cutin.video", "overframe.set"]
+    assert c["archived"][0]["meta"]["files"] == 2   # 有 sha 时按 sha 计数

@@ -241,14 +241,19 @@ def asset_paths(cat, mrk: int, quality: str = HD):
     返回 {prefab, atlas, atlas_asset, skeleton, pages, scale}，没有可替换的资源时回 None。
     """
     b = base(mrk)
-    prefab_lp = f"{b}/{quality}/P{mrk}"
-    deps = cat.deps(prefab_lp)
-    if not deps:
-        return None
     mark = f"/{quality}/"
-    atlas_asset = next((d for d in deps if d.startswith(b + "/") and mark in d
-                        and d.endswith("_Atlas")), None)
-    if not atlas_asset:
+    # 官方有 12 张的 prefab 名字写歪了（尾部带空格、多一层缩放目录），按字面拼查不到
+    # 依赖，这一档就被静默跳过，写出来「有动画没画面」。另外同一张卡可能既有主 prefab
+    # 又有挂图集的 prefab，所以按候选顺序试，第一个能查到本档图集的才算数。
+    prefab_lp = deps = atlas_asset = None
+    for cand in cat.prefab_candidates(b, quality, mrk):
+        cd = cat.deps(cand) or []
+        ca = next((d for d in cd if d.startswith(b + "/") and mark in d
+                   and d.endswith("_Atlas")), None)
+        if ca:
+            prefab_lp, deps, atlas_asset = cand, cd, ca
+            break
+    if not deps:
         return None
     stem = atlas_asset[: -len("_Atlas")]
     rest = stem[len(f"{b}/{quality}/"):]
@@ -336,8 +341,9 @@ def _ours(ctx, mrk):
 
 def _check(tx, target: int, donor: int, force: bool):
     cat, gate = tx.catalog, tx.cutin_gate
-    # 目标卡官方自带动画时, 来源卡默认就是它自己: 把官方那套复制一份来改.
-    # 其它情况下自己复制自己没有意义, 照旧拦掉
+    # 目标卡和来源卡不能是同一张：没有官方动画的卡「自己克隆自己」没有意义。
+    # 有官方动画的卡以前允许这么传（老方案：先把官方那套复制一份再改），2026-11-22
+    # 起视频生成一律克隆来源卡，这条路已经没有调用方；判断留着，不冒险改行为。
     if target == donor and target not in gate.mrks():
         raise MDStudioError(tr("target and donor are the same card"))
     if donor not in gate.mrks():

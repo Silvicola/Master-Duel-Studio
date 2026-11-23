@@ -742,3 +742,55 @@ def apply_origins(ctx, card: int) -> int:
                    "why": "effect restored to the game's own"}
     tx.commit()
     return hit
+
+
+def purge_preview_files() -> int:
+    """清掉试听与抽轨留下的临时 wav，返回删掉几个。
+
+    这两处都在 data/sound/preview 下写新名字的文件：
+      - preview_clip：播放器会占着正在播的那份，同名覆盖会失败，所以每次换随机名，
+        只顺手删同标签的旧文件；
+      - extract_video_track：track_<rand>.wav，从来不删。
+    不整体清理的话就会一直攒（一个音效几十到几百 KB）。
+    进程刚起来时没有任何播放器持有句柄，是唯一能安全全删的时刻。
+    """
+    from mdstudio import runtime
+
+    d = runtime.data_dir() / "sound" / "preview"
+    if not d.is_dir():
+        return 0
+    n = 0
+    for f in d.glob("*.wav"):
+        try:
+            f.unlink()
+            n += 1
+        except OSError:
+            pass          # 还有句柄没释放就跳过，下次启动再清
+    if n:
+        log.info(tr("cleaned %s leftover preview sound file(s)"), n)
+    return n
+
+
+def drop_preview_files(card: int) -> int:
+    """复原一张卡时，把它自己的音效试听文件一起删掉。
+
+    只认 `SE_EV_CUSTOM<卡号>_*.wav`：自己挂的音效（含「用别人那张卡的音效」复制过来的）
+    都落在以卡号命名的槽上，一张卡一个名字，删掉不会牵连别人。
+    直接指向官方标签的那种不删，官方标签的临时文件可能别的卡也在用。
+
+    复原的那一刻预览可能还开着、文件被播放器占着，删不掉就算了，
+    引擎启动时那次整体清理会兜底。
+    """
+    from mdstudio import runtime
+
+    d = runtime.data_dir() / "sound" / "preview"
+    if not d.is_dir():
+        return 0
+    n = 0
+    for f in d.glob(f"{custom_label(card)}_*.wav"):
+        try:
+            f.unlink()
+            n += 1
+        except OSError:
+            pass
+    return n

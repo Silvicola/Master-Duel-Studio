@@ -320,6 +320,22 @@
                                     Orientation="Horizontal"
                                     Spacing="8"
                                     VerticalAlignment="Center">
+                                    <!--
+                                        「自改动画」这一档才有预览：缓存就是生成时留下的那一份，
+                                        复原时已删。下面几档本来就没有可播的内容。
+                                    -->
+                                    <Button
+                                        Width="24"
+                                        Height="24"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Click="PlayPreview_Click"
+                                        Tag="{x:Bind Id}"
+                                        ToolTipService.ToolTip="{x:Bind PlayTip, Mode=OneWay}"
+                                        Visibility="{x:Bind PlayVisibility, Mode=OneWay}">
+                                        <FontIcon FontSize="12" Glyph="&#xE768;" />
+                                    </Button>
                                     <TextBlock
                                         FontSize="11"
                                         Foreground="{ThemeResource SystemFillColorAttentionBrush}"
@@ -541,19 +557,11 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                         <TextBlock VerticalAlignment="Center" Text="来源卡" />
-                                        <AutoSuggestBox
+                                        <TextBox
                                             x:Name="DonorBox"
                                             MinWidth="240"
-                                            PlaceholderText="搜卡名或编号"
-                                            TextMemberPath="Display"
-                                            SuggestionChosen="DonorBox_SuggestionChosen"
-                                            TextChanged="DonorBox_TextChanged">
-                                            <AutoSuggestBox.ItemTemplate>
-                                                <DataTemplate x:DataType="models:CardItem">
-                                                    <TextBlock Text="{x:Bind Display}" />
-                                                </DataTemplate>
-                                            </AutoSuggestBox.ItemTemplate>
-                                        </AutoSuggestBox>
+                                            IsReadOnly="True"
+                                            ToolTipService.ToolTip="按召唤类型自动选定，用右侧「源卡预设」更换。" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                         <TextBlock VerticalAlignment="Center" Text="源卡预设" />
@@ -563,6 +571,20 @@
                                             PlaceholderText="按召唤类型选"
                                             SelectionChanged="DonorPresetBox_SelectionChanged" />
                                     </StackPanel>
+                                    <!--
+                                        切卡后的参数提示。参数不随卡片重置（连续处理几张时不用每次重调），
+                                        所以换一张卡时在来源卡这一行的右端说一句，四秒后自己消失。
+                                    -->
+                                    <TextBlock
+                                        x:Name="CutinCarryHint"
+                                        Grid.Column="2"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Style="{StaticResource CaptionTextBlockStyle}"
+                                        Text="沿用参数"
+                                        ToolTipService.ToolTip="帧数、时长、位移这些不会随换卡重置。要恢复默认，点「方案」里的内置档。"
+                                        Visibility="Collapsed" />
                                 </Grid>
                                 <TextBlock
                                     x:Name="DonorHint"
@@ -571,8 +593,10 @@
                                     TextWrapping="Wrap" />
                             </StackPanel>
 
-                            <!--  生成召唤动画  -->
+                            <!--  生成召唤动画。自改状态（yours/wiped）下整块收起来：
+                                 必须先复原才能重生成，留着按钮只会让人白点。  -->
                             <Border
+                                x:Name="CutinBuildPanel"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource WellBorderBrush}"
                                 BorderThickness="1"
@@ -646,7 +670,7 @@
                                             Grid.Column="0"
                                             VerticalAlignment="Center"
                                             Text="方案"
-                                            ToolTipService.ToolTip="一组画面参数，选中即填好帧数、像素、尺寸" />
+                                            ToolTipService.ToolTip="一组画面参数，选中即填好帧数、像素、高度" />
                                         <ComboBox
                                             x:Name="SchemeBox"
                                             Grid.Column="1"
@@ -730,7 +754,7 @@
                                             MinWidth="96"
                                             HorizontalAlignment="Stretch"
                                             SelectedIndex="0"
-                                            ToolTipService.ToolTip="默认：25% 淡入起步，约三分之一处冲到 108%，回落到 76%，缓回 90% 收尾。自定义可以自己写关键帧。"
+                                            ToolTipService.ToolTip="默认 25% 起步、冲到 108%、收尾 90%。自定义可写关键帧。"
                                             Visibility="Collapsed"
                                             SelectionChanged="CurvePresetBox_SelectionChanged">
                                             <ComboBoxItem Content="默认" />
@@ -757,21 +781,22 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
-                                        <NumberBox x:Name="FramesBox" Grid.Row="0" Grid.Column="0" HorizontalAlignment="Stretch" Header="帧数" Maximum="200" Minimum="4" SpinButtonPlacementMode="Inline" Value="120" ToolTipService.ToolTip="总帧数。帧数 ÷ 时长 = 每秒帧数，72 帧配 1.6 秒就是 45fps。越多越顺，图集也越大；一张装不下会分两页，两页还装不下就得减帧数或减边长。" />
-                                        <NumberBox x:Name="DurBox" Grid.Row="0" Grid.Column="2" HorizontalAlignment="Stretch" Header="时长（秒）" Maximum="15" Minimum="0.4" SmallChange="0.1" SpinButtonPlacementMode="Inline" Value="4.8" ToolTipService.ToolTip="动画播多久。游戏里那段 Timeline 会被拉到这个长度，改长改短都生效。" />
-                                        <NumberBox x:Name="CellBox" Grid.Row="0" Grid.Column="4" HorizontalAlignment="Stretch" Header="像素/帧" Maximum="4096" Minimum="128" SmallChange="10" SpinButtonPlacementMode="Inline" Value="1664" ToolTipService.ToolTip="每帧贴图的边长（正方形）。只影响清晰度和包体大小，不改屏幕上大小。角色在屏幕上越大，这个值越该跟着大：调小会糊，调大只是白占空间。4096 是游戏官方素材的上限，再大没有画质收益。实际能用多大还看帧数：一页装不下会自动分两页，两页还装不下会提示减帧数或减这个值。" />
-                                        <NumberBox x:Name="SizeBox" Grid.Row="0" Grid.Column="6" HorizontalAlignment="Stretch" Header="角色尺寸" Maximum="8000" Minimum="500" SmallChange="50" SpinButtonPlacementMode="Inline" Value="2930" ToolTipService.ToolTip="骨骼宽度，决定动画在屏幕上多大。4800 大约铺满 16:9 屏宽，2930 是常用档。" />
-                                        <NumberBox x:Name="OffXBox" Grid.Row="1" Grid.Column="0" HorizontalAlignment="Stretch" Header="左右移（帧图 px）" SmallChange="10" SpinButtonPlacementMode="Inline" ToolTipService.ToolTip="以帧图像素计：填「像素/帧」那个数正好挪一个帧图宽，正数向右。跟「角色尺寸」一起缩放。" Value="0" />
-                                        <NumberBox x:Name="OffYBox" Grid.Row="1" Grid.Column="2" HorizontalAlignment="Stretch" Header="上下移（帧图 px）" SmallChange="10" SpinButtonPlacementMode="Inline" ToolTipService.ToolTip="以帧图像素计：填「像素/帧」那个数正好挪一个帧图高，正数向上。跟「角色尺寸」一起缩放。" Value="0" />
-                                        <NumberBox x:Name="RotBox" Grid.Row="1" Grid.Column="4" HorizontalAlignment="Stretch" Header="旋转（度）" Maximum="180" Minimum="-180" SmallChange="1" SpinButtonPlacementMode="Inline" Value="0" ToolTipService.ToolTip="整张图绕中心转，正数逆时针，跟 Spine 的约定一致。" />
-                                        <NumberBox x:Name="ZoomBox" Grid.Row="1" Grid.Column="6" HorizontalAlignment="Stretch" Header="放大倍数" Maximum="4" Minimum="0.2" SmallChange="0.1" SpinButtonPlacementMode="Inline" Value="1.1" ToolTipService.ToolTip="整体倍率，1 是不缩放。和「角色尺寸」一起决定最终多大，弹出那一下的幅度也跟着缩放。" />
+                                        <NumberBox x:Name="FramesBox" Grid.Row="0" Grid.Column="0" HorizontalAlignment="Stretch" Maximum="300" Minimum="4" SpinButtonPlacementMode="Inline" Value="120" ToolTipService.ToolTip="总帧数，越多越顺、图集越大。帧数 ÷ 时长 = 每秒帧数，上限 120。" ><NumberBox.Header><TextBlock Text="帧数" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
+                                        <NumberBox x:Name="DurBox" Grid.Row="0" Grid.Column="2" HorizontalAlignment="Stretch" Maximum="15" Minimum="0.4" SmallChange="0.1" SpinButtonPlacementMode="Inline" Value="4.8" ToolTipService.ToolTip="播放时长。游戏里的 Timeline 会拉伸到这个长度。" ><NumberBox.Header><TextBlock Text="时长（秒）" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
+                                        <NumberBox x:Name="CellBox" Grid.Row="0" Grid.Column="4" HorizontalAlignment="Stretch" Maximum="4096" Minimum="128" SmallChange="10" SpinButtonPlacementMode="Inline" Value="1664" ToolTipService.ToolTip="每帧贴图边长。只影响清晰度与包体，不改画面大小；装不下会自动分页。" ><NumberBox.Header><TextBlock Text="像素/帧" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
+                                        <NumberBox x:Name="SizeBox" Grid.Row="0" Grid.Column="6" HorizontalAlignment="Stretch" Maximum="2" Minimum="0.2" SmallChange="0.01" SpinButtonPlacementMode="Inline" Value="1" ToolTipService.ToolTip="角色高度占屏幕的比例，1.00 = 一屏。峰值还要乘放大倍数与曲线。" ><NumberBox.Header><TextBlock Text="角色高度" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
+                                        <NumberBox x:Name="OffXBox" Grid.Row="1" Grid.Column="0" HorizontalAlignment="Stretch" Maximum="75" Minimum="-75" SmallChange="5" SpinButtonPlacementMode="Inline" ToolTipService.ToolTip="按屏幕宽度算：填 25 就是屏宽的四分之一，正数向右。与分辨率、角色高度无关。" Value="0" ><NumberBox.Header><TextBlock Text="左右移（% 屏宽）" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
+                                        <NumberBox x:Name="OffYBox" Grid.Row="1" Grid.Column="2" HorizontalAlignment="Stretch" Maximum="75" Minimum="-75" SmallChange="5" SpinButtonPlacementMode="Inline" ToolTipService.ToolTip="按屏幕高度算：填 25 就是屏高的四分之一，正数向上。与分辨率、角色高度无关。" Value="0" ><NumberBox.Header><TextBlock Text="上下移（% 屏高）" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
+                                        <NumberBox x:Name="RotBox" Grid.Row="1" Grid.Column="4" HorizontalAlignment="Stretch" Maximum="180" Minimum="-180" SmallChange="1" SpinButtonPlacementMode="Inline" Value="0" ToolTipService.ToolTip="绕中心旋转，正数逆时针。" ><NumberBox.Header><TextBlock Text="旋转（度）" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
+                                        <NumberBox x:Name="ZoomBox" Grid.Row="1" Grid.Column="6" HorizontalAlignment="Stretch" Maximum="4" Minimum="0.2" SmallChange="0.1" SpinButtonPlacementMode="Inline" Value="1.1" ToolTipService.ToolTip="整体倍率，1 为原大。弹出幅度随之缩放。" ><NumberBox.Header><TextBlock Text="放大倍数" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
                                     </Grid>
 
                                 </StackPanel>
                             </Border>
 
-                            <!--  从 Spine 导入  -->
+                            <!--  从 Spine 导入。和视频生成一样，自改状态下没有意义  -->
                             <Border
+                                x:Name="SpineImportPanel"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource WellBorderBrush}"
                                 BorderThickness="1"
@@ -812,13 +837,31 @@
 
                             <!--  发动特效  -->
                             <StackPanel x:Name="RunfxSection" Spacing="12" Visibility="Collapsed">
-                                <!--  时机分页: 有特效的卡按游戏已配的时机分, 无特效的卡只有一页  -->
-                                <SelectorBar
-                                    x:Name="FxTimingBar"
-                                    SelectionChanged="FxTimingBar_SelectionChanged" />
+                                <!--  时机分页: 有特效的卡按游戏已配的时机分, 无特效的卡只有一页。
+                                      右端挂「沿用参数」，跟动画页一样只在换卡时露一下。  -->
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <SelectorBar
+                                        x:Name="FxTimingBar"
+                                        SelectionChanged="FxTimingBar_SelectionChanged" />
+                                    <TextBlock
+                                        x:Name="FxCarryHint"
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Style="{StaticResource CaptionTextBlockStyle}"
+                                        Text="沿用参数"
+                                        ToolTipService.ToolTip="帧数、时长、位移这些不会随换卡重置。要恢复默认，点「方案」里的内置档。"
+                                        Visibility="Collapsed" />
+                                </Grid>
 
-                                <!--  用视频自制: 只换动画, 声音在下面单独管  -->
+                                <!--  用视频自制: 只换动画, 声音在下面单独管。
+                                      自改特效状态下整块收起来，但音效区留着：改声音不用重做一套。  -->
                                 <Border
+                                    x:Name="RunfxBuildPanel"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource WellBorderBrush}"
                                     BorderThickness="1"
@@ -884,22 +927,22 @@
                                                 x:Name="FxFramesBox"
                                                 Grid.Row="0"
                                                 Grid.Column="0"
-                                                Header="帧数"
-                                                Maximum="200"
+                                               
+                                                Maximum="300"
                                                 Minimum="4"
                                                 SmallChange="1"
                                                 SpinButtonPlacementMode="Inline"
-                                                Value="60" ToolTipService.ToolTip="从素材里均匀抽多少帧。越多越流畅，图集也越大。" />
+                                                Value="60" ToolTipService.ToolTip="从素材里均匀抽多少帧。越多越流畅，图集也越大；帧数 ÷ 时长 上限 120。" ><NumberBox.Header><TextBlock Text="帧数" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
                                             <NumberBox
                                                 x:Name="FxDurBox"
                                                 Grid.Row="0"
                                                 Grid.Column="1"
-                                                Header="时长（秒）"
+                                               
                                                 Maximum="15"
                                                 Minimum="0.4"
                                                 SmallChange="0.1"
                                                 SpinButtonPlacementMode="Inline"
-                                                Value="2" ToolTipService.ToolTip="整段特效播多久。跟帧数一起决定每秒放几帧。" />
+                                                Value="2" ToolTipService.ToolTip="整段特效播多久。跟帧数一起决定每秒放几帧。" ><NumberBox.Header><TextBlock Text="时长（秒）" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
                                             <ComboBox
                                                 x:Name="FxQualityBox"
                                                 Grid.Row="0"
@@ -907,7 +950,7 @@
                                                 Header="每帧高度（px）"
                                                 HorizontalAlignment="Stretch"
                                                 SelectedIndex="1"
-                                                ToolTipService.ToolTip="图集里每一帧贴图缩到多少像素高。只影响清晰度和图集体积，不改变画面在屏幕上的大小。">
+                                                ToolTipService.ToolTip="每帧贴图高度。只影响清晰度与体积，不改画面大小。">
                                                 <ComboBoxItem Content="720" Tag="720" />
                                                 <ComboBoxItem Content="1080" Tag="1080" />
                                                 <ComboBoxItem Content="1440" Tag="1440" />
@@ -930,44 +973,44 @@
                                                 x:Name="FxSizeBox"
                                                 Grid.Row="1"
                                                 Grid.Column="0"
-                                                Header="画面大小"
+                                               
                                                 Maximum="1.5"
                                                 Minimum="0.1"
                                                 SmallChange="0.05"
                                                 SpinButtonPlacementMode="Inline"
-                                                Value="0.5" ToolTipService.ToolTip="按屏幕宽度算：1.0 就是画面宽度等于屏幕宽度。正方形素材高度会超出屏幕，16:9 素材正好铺满。" />
+                                                Value="0.5" ToolTipService.ToolTip="1.0 = 画面高度等于屏高，宽度按素材自身的比例定。16:9 素材时宽高都正好铺满。" ><NumberBox.Header><TextBlock Text="画面高度" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
                                             <NumberBox
                                                 x:Name="FxOffXBox"
                                                 Grid.Row="1"
                                                 Grid.Column="1"
-                                                Header="左右移（% 屏宽）"
+                                               
                                                 Minimum="-75"
                                                 Maximum="75"
                                                 SmallChange="5"
                                                 SpinButtonPlacementMode="Inline"
                                                 ToolTipService.ToolTip="按屏幕宽度算：填 25 就是屏宽的四分之一，正数向右。与分辨率、画面大小无关。"
-                                                Value="0" />
+                                                Value="0" ><NumberBox.Header><TextBlock Text="左右移（% 屏宽）" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
                                             <NumberBox
                                                 x:Name="FxOffYBox"
                                                 Grid.Row="1"
                                                 Grid.Column="2"
-                                                Header="上下移（% 屏高）"
+                                               
                                                 Minimum="-75"
                                                 Maximum="75"
                                                 SmallChange="5"
                                                 SpinButtonPlacementMode="Inline"
                                                 ToolTipService.ToolTip="按屏幕高度算：填 25 就是屏高的四分之一，正数向上。与分辨率、画面大小无关。"
-                                                Value="0" />
+                                                Value="0" ><NumberBox.Header><TextBlock Text="上下移（% 屏高）" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
                                             <NumberBox
                                                 x:Name="FxRotBox"
                                                 Grid.Row="1"
                                                 Grid.Column="3"
-                                                Header="旋转（度）"
+                                               
                                                 Maximum="180"
                                                 Minimum="-180"
                                                 SmallChange="1"
                                                 SpinButtonPlacementMode="Inline"
-                                                Value="0" ToolTipService.ToolTip="平面内旋转，正数逆时针。" />
+                                                Value="0" ToolTipService.ToolTip="平面内旋转，正数逆时针。" ><NumberBox.Header><TextBlock Text="旋转（度）" Foreground="{ThemeResource TextFillColorPrimaryBrush}" /></NumberBox.Header></NumberBox>
                                         </Grid>
                                     </StackPanel>
                                 </Border>
@@ -1159,5 +1202,6 @@
                 Text="就绪" />
 
         </StackPanel>
+
     </Grid>
 </Page>

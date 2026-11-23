@@ -300,6 +300,31 @@ def crop_alpha(frames, crop_pad: float = 1.04) -> list:
     return _crop_union(frames, crop_pad)
 
 
+def content_box(frames) -> tuple:
+    """所有帧 alpha>30 的并集包围盒, 返回 (宽, 高).
+
+    matte / square 模式会把画面裁成正方形, 左右或上下会留透明边,
+    所以「帧有多高」和「画面有多高」是两回事: 算屏幕占比要用这个。
+    整帧不透明 (full 模式) 时结果就是帧尺寸, 与直接用帧尺寸等价。
+    """
+    box = None
+    for r in frames:
+        if r is None:
+            continue
+        a = r if r.ndim == 2 else r[..., 3]
+        mask = a > 30
+        rows = np.flatnonzero(mask.any(axis=1))
+        if rows.size == 0:
+            continue
+        cols = np.flatnonzero(mask.any(axis=0))
+        b = (int(cols[0]), int(rows[0]), int(cols[-1]), int(rows[-1]))
+        box = b if box is None else (min(box[0], b[0]), min(box[1], b[1]),
+                                     max(box[2], b[2]), max(box[3], b[3]))
+    if box is None:
+        return 0, 0
+    return box[2] - box[0] + 1, box[3] - box[1] + 1
+
+
 def matte(frames, crop_pad=1.04, key="auto") -> list:
     """抠图 + 按所有帧的并集包围盒裁成正方形 (角色在每帧位置一致, 不会抖)
 

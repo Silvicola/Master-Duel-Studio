@@ -26,6 +26,47 @@ class Catalog:
             raise AssetMissing(tr("manifest_tcg not found in the active LocalData group"))
         self.data = decode(self.path.read_bytes())
         self._idx = {e["assetName"]: e for e in self.data["informations"]}
+        self._loose = None
+
+    def find_actual(self, name):
+        """按名字找条目，容忍官方把名字写歪。
+
+        实测 12 张卡的 prefab 条目叫 `HighEnd_HD/P7302 `（尾部多一个空格），
+        按字面拼出来的路径查不到依赖，生成时这一档被静默跳过。这里先按原样找，
+        找不到再用去掉尾部空格的索引找一次，返回磁盘上真实的名字。
+        """
+        if name in self._idx:
+            return name
+        if self._loose is None:
+            self._loose = {}
+            for n in self._idx:
+                if n != n.rstrip():
+                    self._loose.setdefault(n.rstrip(), n)
+        return self._loose.get(name.rstrip())
+
+    def prefab_candidates(self, base: str, quality: str, mrk: int) -> list:
+        """某一档可能叫这个名字的所有 prefab，按优先级排。
+
+        官方有几种写歪的方式：
+        - 尾部带空格：`HighEnd_HD/P7302 `（7302、16841 这批）
+        - 多一层缩放目录：`HighEnd_HD/0.71/P18166`、`SD/0.5/P7302`
+
+        同一张卡可能同时存在「主 prefab」和「带图集的 prefab」，前者没挂 atlas，
+        所以要按候选顺序试，第一个能查到本档图集的才算数（见 ops/cutin.asset_paths）。
+        """
+        want = f"P{int(mrk)}"
+        out = []
+        hit = self.find_actual(f"{base}/{quality}/{want}")
+        if hit:
+            out.append(hit)
+        for n in self._idx:
+            s = n.rstrip()
+            if not (s.startswith(base + "/") and s.endswith("/" + want)):
+                continue
+            mid = s[len(base) + 1:-(len(want) + 1)]
+            if mid.startswith(quality + "/") and n not in out:
+                out.append(n)
+        return out
 
     def __contains__(self, name):
         return name in self._idx

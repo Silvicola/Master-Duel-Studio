@@ -155,7 +155,7 @@ public partial class App : Application
             // 引擎起不来也要让窗口出来，界面上把原因写清楚，好排查
             EngineError = EnginePaths.InPortableLayout
                 ? "找不到 Python 运行环境。\n" +
-                  "请双击程序目录里的「启动.cmd」，它会装好依赖再打开本程序。\n\n" + ex.Message
+                  "多半是解压不完整：请把整个文件夹重新解压一遍，python 子目录不能少。\n\n" + ex.Message
                 : ex.Message;
         }
 

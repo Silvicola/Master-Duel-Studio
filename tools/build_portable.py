@@ -23,7 +23,7 @@ CORE_SRC = ROOT / "core" / "mdstudio"
 TOOLS_SRC = ROOT / "tools"
 # tools/ 里除了随包资源，还有构建脚本本身，别把它们塞进包里
 # gen_*.py 是素材生成器，依赖作者本地的参考图，跑不起来也用不上
-TOOLS_SKIP = ("build_portable.py", "make_icon.py", "write_launcher.py", "assets", "gen_*.py")
+TOOLS_SKIP = ("build_portable.py", "make_icon.py", "assets", "gen_*.py")
 # 输出目录名跟随版本号 (core/mdstudio/__init__.py 的 __version__): MDStudio-v-1.0.0-beta_202611161353。
 # 版本号写法 v-主.次.修订-beta_年月日时分 (2026-11-16 起精确到分钟, 12 位)。
 # 打包时按当前时刻自动写回 __init__.py, 不用手工改版本号。
@@ -298,8 +298,10 @@ for dll in ("msvcp140.dll", "msvcp140_1.dll"):
         print(f"   ! 系统里没有 {dll}, 跳过 (对方可能装了 VC++ 运行库)")
 
 # ---------------------------------------------------------------- 5. 启动器
-print("写启动器…")
-run([sys.executable, str(ROOT / "tools" / "write_launcher.py"), str(DIST)])
+# 2026-11-21 去掉「启动.cmd / start.cmd / 使用说明.txt」三件套：
+# 包里的 python\ 与 exe 都已自包含，启动器唯一有效动作就是 start MDStudio.exe，
+# 剩下几条分支（找系统 Python、建 .pyenv、pip 装依赖）既用不上，也和「不需要联网」矛盾。
+# 说明文字过期更快，删掉比维护省事，用户双击 MDStudio.exe 即可。
 
 # ---------------------------------------------------------------- 6. 清掉不该带的
 for junk in ("MDStudio.pdb",):

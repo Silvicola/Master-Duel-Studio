@@ -150,19 +150,6 @@
                                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                     Text="{x:Bind Method}" />
                                             </Border>
-                                            <Border
-                                                Padding="7,2"
-                                                Background="{x:Bind CountPillBrush}"
-                                                BorderBrush="{x:Bind CountPillBorderBrush}"
-                                                BorderThickness="1"
-                                                CornerRadius="999"
-                                                Visibility="{x:Bind CountVisibility}">
-                                                <TextBlock
-                                                    FontSize="11"
-                                                    FontWeight="SemiBold"
-                                                    Foreground="{x:Bind CountPillTextBrush}"
-                                                    Text="{Binding CountText}" />
-                                            </Border>
                                         </StackPanel>
                                     </StackPanel>
 
