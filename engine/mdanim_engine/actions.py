@@ -226,14 +226,14 @@ def _history_undo(ctx, ids):
     return {"undone": [{"op": r.op, "card": r.card, "id": r.id} for r in done]}
 
 
-@register("tx.resync")
-def _resync(ctx):
-    """游戏更新后: gate/manifest 被重写, 我们的条目没了, bundle 还在
+@register("history.restore_all")
+def _history_restore_all(ctx, preview=False):
+    """一键复原：把本工具写进游戏的改动一次撤完。
 
-    照 journal 把改过的东西补回去. 不新增记录, 所以历史列表不变。
+    preview 只数一遍（确认框要先告诉用户会撤多少），不碰游戏文件。
     """
-    from mdstudio.ops.tx import resync
-    return resync(ctx)
+    from mdstudio.ops.tx import restore_all, restore_pending
+    return restore_pending(ctx) if preview else restore_all(ctx)
 
 
 @register("schemes.save")

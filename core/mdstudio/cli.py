@@ -382,7 +382,7 @@ def cmd_cards_search(ctx, a):
     rows = [(ci.id, ci.name, _badge(ci.cutin), _badge(ci.runfx), _sib_note(ci))
             for ci in _inv(ctx, a).search(" ".join(a.query), has=a.has, limit=a.limit)]
     _table(rows, (tr("id"), tr("name"), tr("cut-in"), tr("effect"), tr("other printings")))
-    print(tr("yes = has one (game or another mod)  yours = added by this tool  WIPED = run resync"))
+    print(tr("yes = has one (game or another mod)  yours = added by this tool  WIPED = wiped by a game update"))
 
 
 def cmd_cards_show(ctx, a):
@@ -447,25 +447,6 @@ def cmd_undo(ctx, a):
     done = undo_ids(ctx, ids)
     for r in done:
         print(tr("undone: %s %s (%s)") % (r.op, r.card or "", r.id))
-
-
-def cmd_resync(ctx, a):
-    from mdstudio.ops.tx import resync
-    r = resync(ctx)
-    print(tr("cut-ins re-added: %s") % (r['cutin'] or '-'))
-    print(tr("effects re-added: %s") % (r['runfx'] or '-'))
-    print(tr("manifest entries fixed: %s") % r['catalog'])
-    if r.get("moved"):
-        print(tr("files moved from an old group: %s") % len(r['moved']))
-    for f in r["lost_files"]:
-        print(tr("LOST"), f, tr("(re-create that card)"))
-    for c in r.get("broken", []):
-        print(tr("BROKEN"), c, tr("(files missing, remove and add it again)"))
-    for c in r.get("game_took_over", []):
-        print(tr("GAME"), c, tr("the game now has its own version for this card, yours was left off"))
-    for lb in r.get("sound_reset", []):
-        print(tr("SOUND"), lb, tr("(activation effect) was updated by the game, your WAV is gone: "
-                                  "run `sound restore` then inject it again"))
 
 
 def cmd_history(ctx, a):
@@ -535,7 +516,6 @@ def build_parser():
     sub.add_parser("mine", aliases=["ls"], help=tr("every card this tool changed")).set_defaults(fn=cmd_mine)
 
     sub.add_parser("info", help=tr("game path, active group, journal")).set_defaults(fn=cmd_info)
-    sub.add_parser("resync", help=tr("re-apply your mods after a game update")).set_defaults(fn=cmd_resync)
     x = sub.add_parser("history", aliases=["log"], help=tr("everything this tool did"))
     x.add_argument("--names", action="store_true", help=tr("show card names"))
     x.set_defaults(fn=cmd_history)

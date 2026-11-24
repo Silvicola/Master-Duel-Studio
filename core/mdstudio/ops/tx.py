@@ -4,7 +4,7 @@
 journal 在 gate 前面, 这样 gate 里出现的东西一定有记录, 工具能认出来也能撤.
 撤销反过来: 先 gate (先让游戏别再触发), 再 manifest, 最后文件.
 
-每次写的文件都记 sha (meta["sha"]). 以后撤销/resync 时文件对不上 = 游戏更新换掉了, 那是游戏的东西, 别碰.
+每次写的文件都记 sha (meta["sha"]). 以后撤销时文件对不上 = 游戏更新换掉了, 那是游戏的东西, 别碰.
 """
 import hashlib
 import logging
@@ -337,7 +337,7 @@ def undo(ctx, records, keep_records=()):
     if stuck:
         doomed -= stuck
         log.warning(tr("kept %s effect file(s): the game's list still points at them, "
-                       "removing them would break the card. Run resync."), len(stuck))
+                       "removing them would break the card."), len(stuck))
     # of_card_asset 是召唤动画和超框卡图共用的映射表，只有那几族会写它。
     # 撤销纯特效 / 音效记录时不能去回填：同一张卡可能还挂着独立动画写的自映射
     # (cutin.own_anim 把 22804→14952 改成 22804→22804)，一回填就把动画改回借底图，
@@ -477,121 +477,6 @@ def _current_deps(cat, rec, name):
     return None
 
 
-def resync(ctx) -> dict:
-    """游戏更新后: gate/manifest 被重写, 我们的条目没了, bundle 还在. 照 journal 补回去"""
-    from mdstudio.ops import cutin as C
-    ctx.guard()
-    recs = ctx.journal.load()
-    step(tr("checking %s change(s) against the game"), len(recs))
-    tx = Tx(ctx, "resync", 0, record=False)
-    report = {"cutin": [], "runfx": [], "catalog": 0, "moved": [], "lost_files": [],
-              "broken": {}, "overframe": [], "gate_added": 0}
-    live_sigs = {runfx_sig(e) for e in tx.runfx_gate.entries} if any(r.runfx_added for r in recs) else set()
-    changed = []
-    shas = last_sha(recs)
-    report["game_took_over"] = []
-    skip_cards = set()
-    for rec in recs:
-        # 更新后游戏自己给这张卡出了官方版本: 文件被换成官方的了. 不抢, 报告给用户
-        if any(replaced_by_game(ctx, rel, shas) for rel in rec.created):
-            skip_cards.add((rec.card, family(rec.op)))
-    # 换过的声音: 更新把那个音频文件换成新版了 = 你的 wav 没了, 不能自动重放 (旧备份是旧版本), 只能提醒
-    report["sound_reset"] = sorted({r.meta.get("label") for r in recs if r.op == "sound.inject"
-                                    and any(replaced_by_game(ctx, rel, shas) for rel in r.modified)})
-    for card, fam in sorted(skip_cards):
-        report["game_took_over"].append(card)
-        log.warning(tr("%s: the game now ships its own %s for this card, yours was left off"), card, fam)
-    for rec in sorted(recs, key=lambda r: r.time):
-        if (rec.card, family(rec.op)) in skip_cards:
-            continue
-        if rec.runfx_removed:
-            # replace 模式: 更新把游戏原来那条加回来了, 再拿掉, 不然一张卡两条效果
-            if tx.runfx_gate.remove_matching(rec.runfx_removed):
-                report["runfx"].append(rec.card)
-        for m in [*rec.cutin_mrks, *rec.meta.get("gate", [])]:
-            if tx.cutin_gate.add(m):
-                report["cutin"].append(m)
-        missing = [e for e in rec.runfx_added if runfx_sig(e) not in live_sigs]
-        if missing:
-            tx.runfx_gate.append(missing)
-            live_sigs |= {runfx_sig(e) for e in missing}
-            report["runfx"].append(rec.card)
-        for rel in rec.created:
-            if ctx.game.abs(rel).is_file():
-                continue
-            # 更新换了 group 的话文件还躺在旧 group 里, 搬过来
-            # 旧 group 可能不止一个, 拿最新的那份
-            old = sorted((p for p in ctx.game.localdata.glob(f"*/0000/{rel}") if p.is_file()),
-                         key=lambda p: p.stat().st_mtime, reverse=True)
-            if old:
-                tx._writes.append((ctx.game.abs(rel), old[0].read_bytes()))
-                report["moved"].append(rel)
-            else:
-                report["lost_files"].append(rel)
-        for name, v in rec.catalog.items():
-            want = _current_deps(tx.catalog, rec, name) or v["new"]
-            if want != v["new"]:
-                v["new"] = want
-                changed.append(rec)
-                if rec.op == "cutin.borrow":
-                    # donor 的 prefab 也可能被更新换了, 一起重新复制
-                    donor = rec.meta["donor"]
-                    src = ctx.game.find_logical(C.prefab(donor, name.split("/")[-2]))
-                    if src:
-                        h = get_crc(name)
-                        data = retag(src.read_bytes(), donor, rec.card, h, deep=False)
-                        tx._writes.append((ctx.game.path_for(h), data))
-                        # 新内容记进 sha, 不然以后撤销会当成"被游戏换掉了"而不删
-                        rec.meta.setdefault("sha", {})[f"{h[:2]}/{h}"] = sha_of(data)
-            if tx.catalog.deps(name) != want:
-                tx.catalog.set(name, want)
-                report["catalog"] += 1
-
-    # 卡图的登记表（of_card_asset）是一份覆盖在 data.unity3d 之上的松散表。
-    # 真正的失真只有一种：撤销/重写/换号之后，我们自己的条目整片丢掉，
-    # 纹理还是超框图，但游戏当普通卡渲染，自绘的卡名/攻防/效果文字就和原生文字叠在一起。
-    #
-    # 另一种"失真"是假的：本机表比内置表少一些条目。少掉的那些（22769、22772 这类
-    # 没有卡名的内部触发号）游戏本来就在 data.unity3d 里读，把它们复制进本机覆盖表
-    # 不会多出任何超框效果，只会让本机表凭空膨胀。以前每次同步报的
-    # 「补齐超框条目 49 条」就是这段复制，纯噪音。
-    art_cards = sorted({r.card for r in recs if r.card and family(r.op) == "overframe"})
-    from mdstudio.ops import overframe as OF
-
-    try:
-        gp = OF.gate_bundle_path(ctx)
-        live = OF.gate_records(ctx)
-        # 判"缺"要同时看内置表：官方超框卡可能只登记在内置表里，
-        # 只比对本机会把它误判成缺失，再登记一条重复条目。
-        have = {t for t, _ in OF.merge_builtin(live, OF.bundled_gate_records(ctx))}
-        missing = [c for c in art_cards if c not in have]
-        if missing:
-            merged = list(live)
-            for c in missing:
-                merged = OF._add_entry(merged, c)
-                log.warning(tr("card art %s: re-registered as over-frame"), c)
-            tx.put_existing(gp, OF._gate_bytes_with(gp, merged))
-            report["overframe"] = missing
-    except MDStudioError as e:
-        log.warning(tr("card art registration not restored: %s"), e)
-
-    if (report["cutin"] or report["runfx"] or report["catalog"] or report["moved"]
-            or report["overframe"]):
-        tx.commit()
-    report["runfx"] = sorted(set(report["runfx"]))
-    if changed and not ctx.dry_run:
-        ctx.journal.update({r.id: r for r in changed}.values())
-
-    # 修完再查一遍依赖, 有缺的直接点名 (缺 = 进游戏无限加载)
-    for rec in recs:
-        if rec.op in C.OPS:
-            miss = C.missing(tx.catalog, rec.card)
-        else:
-            miss = sorted({d for n in rec.catalog for d in tx.catalog.missing(n)})
-        if miss:
-            report["broken"][rec.card] = miss
-    return report
-
 
 def family(op: str) -> str:
     """cutin.borrow / cutin.video / pack.cutin -> cutin; runfx.* / pack.runfx -> runfx; 其他原样"""
@@ -667,3 +552,69 @@ def undo_ids(ctx, ids) -> list:
     keep = [r for r in recs if r not in want]
     undo(ctx, want, keep_records=keep)
     return want
+
+
+# 一键复原覆盖的族。壁纸不在这里：它写的是 data.unity3d，复原要重写整个包，
+# 由壁纸页自己的「还原」处理（2026-11-24 用户定稿）。
+RESTORE_FAMILIES = ("cutin", "runfx", "sound", "overframe")
+
+_KIND_OF_FAMILY = {"overframe": "art"}
+
+
+def _restorable(ctx) -> list:
+    """一键复原要撤的那些记录：本工具写进游戏的改动，不含壁纸与只读留痕。
+
+    pack.install / wallpaper.set 这类 card=0 的记录天然被排除。
+    """
+    out = []
+    for r in ctx.journal.load():
+        if not r.card or (r.meta or {}).get("noop"):
+            continue
+        if family_for(r.op) in RESTORE_FAMILIES:
+            out.append(r)
+    return out
+
+
+def restore_pending(ctx) -> dict:
+    """一键复原会动哪些卡、多少文件。只读 journal，不碰游戏文件。
+
+    确认框要先把数量摊给用户看，所以这条查询必须便宜且无副作用。
+    """
+    recs = _restorable(ctx)
+    return _restore_summary(recs)
+
+
+def _restore_summary(recs) -> dict:
+    by_kind: dict = {}
+    for r in recs:
+        k = _KIND_OF_FAMILY.get(family_for(r.op), family_for(r.op))
+        by_kind.setdefault(k, set()).add(int(r.card))
+    cards = sorted({int(r.card) for r in recs})
+    return {"cards": cards, "total": len(cards), "by_kind": {k: len(v) for k, v in by_kind.items()},
+            "files": sum(len(r.modified) + len(r.created) for r in recs)}
+
+
+def restore_all(ctx) -> dict:
+    """一键复原：一次撤掉本工具留在游戏里的全部改动。
+
+    等价于挨张点「复原」，历史页也照常一张卡一行（2026-11-24 用户定稿：
+    不压成一条汇总）。顺序交给 undo：它按时间倒序处理，后叠上去的改动先撤，
+    同一张卡的链式改动不会串。
+    """
+    ctx.guard()
+    recs = _restorable(ctx)
+    if not recs:
+        raise MDStudioError(tr("nothing to undo"))
+    summary = _restore_summary(recs)
+    summary["kept"] = int(undo(ctx, recs, keep_records=[]) or 0)
+    # 音效标签回滚：逐卡复原特效时 runfx.remove 会补这一步，一键复原也要，
+    # 否则「先把官方音效改成 X、再生成特效」的卡会停在 X 上。
+    if not ctx.dry_run:
+        from mdstudio.ops import sound as S
+
+        for card in sorted({int(r.card) for r in recs if family_for(r.op) in ("runfx", "sound")}):
+            try:
+                S.apply_origins(ctx, card)
+            except Exception as e:      # 音效是附加项，失败不该让复原整体报错
+                log.warning(tr("sound label on %s was not rolled back: %s"), card, e)
+    return summary

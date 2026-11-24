@@ -55,7 +55,7 @@ JOB_TITLES = {
     "runfx.remove": tr("Removing an activation effect"), "sound.inject": tr("Replacing an effect sound"),
     "sound.restore": tr("Restoring an effect sound"), "pack.export": tr("Exporting a pack"),
     "pack.install": tr("Installing a pack"),
-    "tx.resync": tr("Resync after update"), "tx.undo_ids": tr("Undo"),
+    "tx.undo_ids": tr("Undo"),
     "spine.port_card": tr("Importing a Spine cut-in"), "spine.port_all": tr("Importing every Spine cut-in"),
     "spine.check_all": tr("Checking Spine cut-ins"),
 }
@@ -1690,36 +1690,10 @@ class Main(MicaWindow):
         self.set_journal.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.set_journal.setWordWrap(True)
         f.addRow(tr("History stored in"), self.set_journal)
-        f.addRow(_row(_btn(tr("Resync"), self.on_resync, "Primary"), 1))
-        tip2 = QLabel(tr("A game update swaps the data folder, so your changes stop showing."))
-        tip2.setWordWrap(True)
-        tip2.setObjectName("Muted")
-        f.addRow(tip2)
         v.addWidget(g)
 
         v.addStretch(1)
         return _scroll(v)
-
-    # ------------------------------------------------------------------ refresh / resync
-    def on_resync(self):
-        from mdstudio.ops.tx import resync
-        if not self.need_game():
-            return
-
-        def show(r):
-            log.info(tr("resync: cut-ins %s, effects %s, manifest fixes %d, moved %d, lost %d"),
-                     r["cutin"] or "-", r["runfx"] or "-", r["catalog"], len(r.get("moved", [])),
-                     len(r["lost_files"]))
-            # 要用户动手的单独弹出来, 只进日志没人看
-            todo = [tr("Files lost (make that card again): %s") % f for f in r["lost_files"]]
-            todo += [tr("Card %s: files missing, remove it and add it again") % c for c in r.get("broken", {})]
-            todo += [tr("Card %s: the game now has its own version, yours was left off")
-                     for c in r.get("game_took_over", [])]
-            todo += [tr("Activation effect sound %s: updated by the game, your WAV is gone "
-                        "(restore, then replace again)") for lb in r.get("sound_reset", [])]
-            if todo:
-                QMessageBox.warning(self, tr("Resync: needs a look"), "\n".join(todo[:20]))
-        self.run(resync, done=show)
 
     def refresh(self):
         if not self.ctx or self._busy:

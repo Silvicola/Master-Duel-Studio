@@ -867,7 +867,7 @@ def port_all(ctx, path, force=False) -> dict:
         try:
             if C._ours(ctx, mrk):
                 if mrk not in live:
-                    raise MDStudioError(tr("%s: your import was wiped by a game update. Run: mdstudio resync") % mrk)
+                    raise MDStudioError(tr("%s: your import was wiped by a game update. Import it again.") % mrk)
                 if not _own_port_only(ctx, mrk):
                     raise MDStudioError(tr("%s already has a cut-in you made with this tool (not a Spine import). "
                                           "Remove it first.") % mrk)

@@ -2836,7 +2836,7 @@ public sealed partial class AnimPage : Page
                 resultTitle = "已移除，但有残留";
                 resultBody = $"{card.Title} 的特效条目没从游戏的表里清掉，" +
                              $"为了不让对局报错，留了 {kept} 个文件没有删。\n\n" +
-                             "请点一次顶部的「重新同步」。";
+                             "这几个文件不影响对局，游戏里这张卡会显示成官方特效。";
                 resultDanger = true;
             }
             else

@@ -372,34 +372,39 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="2">
-                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="游戏更新后重新同步" />
+                            <StackPanel Spacing="4">
+                                <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="游戏更新前先复原" />
                                 <TextBlock
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Style="{StaticResource CaptionTextBlockStyle}"
-                                    Text="游戏更新会重建数据清单，你改过的召唤动画和发动特效会失效。同步会把它们按历史记录补回去。"
+                                    Text="可先导出整合包，然后点「一键复原」，最后前往「Steam → Yu-Gi-Oh! Master Duel → 属性 → 已安装文件 → 验证游戏文件完整性」。等游戏更新后再导入整合包即可。"
+                                    TextWrapping="Wrap" />
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Text="壁纸不在复原范围内，需要的话到壁纸页单独还原。"
                                     TextWrapping="Wrap" />
                             </StackPanel>
                             <Button
-                                x:Name="ResyncButton"
+                                x:Name="RestoreButton"
                                 Grid.Column="1"
                                 VerticalAlignment="Top"
-                                Click="Resync_Click"
-                                Content="重新同步"
+                                Click="RestoreAll_Click"
+                                Content="一键复原"
                                 Style="{StaticResource AccentButtonStyle}" />
                         </Grid>
                         <StackPanel
-                            x:Name="ResyncBusy"
+                            x:Name="RestoreBusy"
                             Orientation="Horizontal"
                             Spacing="10"
                             Visibility="Collapsed">
                             <ProgressRing
-                                x:Name="ResyncRing"
+                                x:Name="RestoreRing"
                                 Width="16"
                                 Height="16"
                                 IsActive="True" />
                             <TextBlock
-                                x:Name="ResyncStatus"
+                                x:Name="RestoreStatus"
                                 VerticalAlignment="Center"
                                 Text="准备中"
                                 TextWrapping="Wrap" />

@@ -84,8 +84,8 @@ ZH: dict[str, str] = {
     "cut-in on %s": "召唤动画在 %s",
     "effect on %s": "发动特效在 %s",
     "other printings": "其他版本",
-    "yes = has one (game or another mod)  yours = added by this tool  WIPED = run resync":
-        "已有 = 已有动画（游戏自带或其他 mod）  本工具添加 = 本工具加的  已被更新清除 = 运行 resync",
+    "yes = has one (game or another mod)  yours = added by this tool  WIPED = wiped by a game update":
+        "已有 = 已有动画（游戏自带或其他 mod）  本工具添加 = 本工具加的  已被更新清除 = 被游戏更新清掉了",
     "(unknown name)": "（未知名称）",
     "  cut-in : %s": "  召唤动画：%s",
     "  effect : %s": "  发动特效：%s",
@@ -277,7 +277,6 @@ ZH: dict[str, str] = {
     "(no name)": "（无名）",
     "Undo everything this tool did to it": "撤销本工具对它做过的一切",
     "My cards (everything this tool changed)": "我的卡（本工具改过的一切）",
-    "Resync after a game update": "游戏更新后重新同步",
     "Undo a change…": "撤销一项改动…",
     "Export my work as a pack…": "把成果导出为整合包…",
     "Install a pack…": "安装整合包…",
@@ -293,7 +292,6 @@ ZH: dict[str, str] = {
     "filter": "筛选",
     "Refresh   (F5)": "刷新   （F5）",
     "Quit   (Ctrl+Q)": "退出   （Ctrl+Q）",
-    "Put the cut-in back (resync)": "恢复召唤动画（重新同步）",
     "Forget this cut-in (remove)": "忘掉这个召唤动画（移除）",
     "another printing already has one": "另一个版本已有",
     "Add cut-in: Disaster Leo (default)": "加召唤动画：Disaster Leo（默认）",
@@ -308,7 +306,6 @@ ZH: dict[str, str] = {
     "Reskin: export textures…": "换皮：导出贴图…",
     "Reskin: import painted PNGs…": "换皮：导入画好的 PNG…",
     "Rebuild from a video / GIF…": "从视频 / GIF 重建…",
-    "Put the effect back (resync)": "恢复发动特效（重新同步）",
     "Forget this effect (remove)": "忘掉这个发动特效（移除）",
     "another printing has an effect": "另一个版本有发动特效",
     "Add activation effect: pick a card…": "加发动特效：选一张卡…",
@@ -393,7 +390,6 @@ ZH: dict[str, str] = {
     "remove it and add it again": "移除后重新加",
     "was updated by the game, your WAV is gone (restore it, then replace again)":
         "被游戏更新覆盖，你的 WAV 没了（先还原，再重新替换）",
-    "resync": "重新同步",
     "nothing to export yet": "还没有可导出的",
     "Save to which folder?": "保存到哪个文件夹？",
     "export %s card(s)": "导出 %s 张卡",
@@ -449,7 +445,6 @@ ZH: dict[str, str] = {
     "Restoring an effect sound": "还原特效音效",
     "Exporting a pack": "导出整合包",
     "Installing a pack": "安装整合包",
-    "Resync after update": "游戏更新后重新同步",
     "Undo": "撤销",
     "Importing a Spine cut-in": "导入 Spine 动画",
     "Importing every Spine cut-in": "导入全部 Spine 动画",
@@ -471,7 +466,6 @@ ZH: dict[str, str] = {
     "Exports (packs, textures) still write to the folder you pick.":
         "不碰游戏文件：日志里显示会改什么。\n导出（整合包、贴图）仍然写进你选的文件夹。",
     "Game folder…": "游戏目录…",
-    "↻ Resync after update": "↻ 游戏更新后重新同步",
     "%s  ·  group %s": "%s  ·  数据组 %s",
     "Journal + backups: %s": "日志与备份：%s",
     "game not found": "找不到游戏",
@@ -509,10 +503,6 @@ ZH: dict[str, str] = {
     "Name": "名称",
     "Effect": "发动特效",
     "Same name, other ID": "同名卡，其他 ID",
-    "yes = already has one (game or another mod)  ·  yours = added by this tool  ·  "
-    "WIPED = removed by a game update, press Resync":
-        "已有 = 已有动画（游戏自带或其他 mod）  ·  本工具添加 = 本工具加的  ·  "
-        "已被更新清除 = 被游戏更新清掉，按重新同步",
     "→ Cut-in: this card": "→ 召唤动画：用这张卡",
     "→ Cut-in: use as donor": "→ 召唤动画：用作来源卡",
     "→ Effect: this card": "→ 发动特效：用这张卡",
@@ -647,14 +637,6 @@ ZH: dict[str, str] = {
     "What": "操作",
     "From": "来源",
     "Journal + backups: -": "日志与备份：-",
-    "resync: cut-ins %s, effects %s, manifest fixes %d, moved %d, lost %d":
-        "重新同步：召唤动画 %s，特效 %s，清单修复 %d，移动 %d，丢失 %d",
-    "Files lost (make that card again): %s": "文件丢失（重新做那张卡）：%s",
-    "Card %s: files missing, remove it and add it again": "卡 %s：文件缺失，移除后重新加",
-    "Card %s: the game now has its own version, yours was left off": "卡 %s：游戏现在有自带的版本，你的没被覆盖",
-    "Activation effect sound %s: updated by the game, your WAV is gone (restore, then replace again)":
-        "特效音效 %s：被游戏更新覆盖，你的 WAV 没了（先还原，再替换）",
-    "Resync: needs a look": "重新同步：需要看一下",
     "  [not downloaded]": "  [未下载]",
     "Log: %s": "日志：%s",
     "MD Cut-in Kit crashed": "MD Cut-in Kit 崩溃了",
@@ -715,8 +697,8 @@ ZH: dict[str, str] = {
         "%s 已有本工具加的发动特效。先点「复原」再生成。",
     "donor %s only has an opponent-side entry, nothing to borrow":
         "来源卡 %s 只有对手那一条条目，没有可借的",
-    "%s dependency file(s) missing on disk, e.g. %s. Run resync, or open those cards once in game.":
-        "盘上缺 %s 个依赖文件，例如 %s。运行 resync，或在游戏里见过那些卡。",
+    "%s dependency file(s) missing on disk, e.g. %s. Open those cards once in game.":
+        "盘上缺 %s 个依赖文件，例如 %s。在游戏里见过那些卡就行了。",
     "%s game files for %s %s (%s bundle(s))": "%s %s %s 的游戏文件（%s 个 bundle）",
     "%s has a borrowed cut-in. Remove it, the video needs its own clone.":
         "%s 是借来的召唤动画。移除它，视频需要自己的克隆。",
@@ -743,8 +725,8 @@ ZH: dict[str, str] = {
     "%s was replaced by a game update, left as the game has it": "%s 被游戏更新换掉了，按游戏现在的样子保留",
     "%s: clip not on disk (not downloaded, or a new label). It would be silent. Pick one that is.":
         "%s：音频不在盘上（没下载，或是新标签）。用了是静音。挑个在盘上的。",
-    "%s: effect isn't in the game's list right now (game update?), run resync":
-        "%s：特效现在不在游戏的列表里（游戏更新了？），运行 resync",
+    "%s: effect isn't in the game's list right now (game update?), redo that card":
+        "%s：特效现在不在游戏的列表里（游戏更新了？），需要重做这张卡",
     "%s: needs a plain PCM .wav (%s). Convert it: ffmpeg -i in.mp3 -c:a pcm_s16le out.wav":
         "%s：需要普通 PCM 的 .wav（%s）。转换：ffmpeg -i in.mp3 -c:a pcm_s16le out.wav",
     "%s: no .resource in clip bundle": "%s：音频 bundle 里没有 .resource",
@@ -833,7 +815,7 @@ ZH: dict[str, str] = {
         "特效 %s：卡已有游戏自带的特效，跳过（用 replace 安装才能替换）",
     "effect %s: needs %s, not on this machine (open that card once in game), skipped":
         "特效 %s：需要 %s，这台机器上没有（在游戏里见那张卡一次），跳过",
-    "effect bundle is gone, run resync": "特效 bundle 没了，运行 resync",
+    "effect bundle is gone, redo that card": "特效 bundle 没了，需要重做这张卡",
     "effect sound of %s -> %s": "%s 的特效音效 -> %s",
     "empty card": "卡是空的",
     "exported %d card(s), %d bundle(s) -> %s": "已导出 %d 张卡、%d 个 bundle -> %s",
@@ -1053,8 +1035,8 @@ ZH: dict[str, str] = {
     "%s: start animation %s is not in the skeleton": "%s：起始动画 %s 不在骨架里",
     "  would rebuild %s (dry run)": "  会重建 %s（预演）",
     "no Spine cut-ins found under %s": "%s 下没找到任何 Spine 召唤动画",
-    "%s: your import was wiped by a game update. Run: mdstudio resync":
-        "%s：你导入的东西被游戏更新冲掉了，请跑 mdstudio resync",
+    "%s: your import was wiped by a game update. Import it again.":
+        "%s：你导入的东西被游戏更新冲掉了，请重新导入一次",
     "%s already has a cut-in you made with this tool (not a Spine import). Remove it first.":
         "%s 已经有你用这个工具做的召唤动画（不是 Spine 导入的），请先移除。",
     "%s already imported by this tool and passes --check": "%s 已经由这个工具导入过，并且 --check 通过",
@@ -1103,9 +1085,6 @@ ZH: dict[str, str] = {
         "每个账号的文件各自独立，历史也分开保存。",
     "Maintenance": "维护",
     "History stored in": "历史存放于",
-    "A game update swaps the data folder, so your changes stop showing.":
-        "游戏更新会换数据目录，之前的改动会不显示。",
-    "Resync": "重新同步",
     "Writes nothing: the log only lists what would change. Exports still work.":
         "不写游戏文件，日志只列出会改什么；导出照常。",
     "%s  ·  %s files": "%s  ·  %s 个文件",

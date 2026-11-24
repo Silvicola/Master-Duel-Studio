@@ -310,7 +310,7 @@ def export(ctx, cards, out_path, name="my-pack", zip_it=True, kinds=None, notes=
             shutil.copy2(src, dst)
         if missing:
             raise MDStudioError(tr("%s dependency file(s) missing on disk, e.g. %s. "
-                                  "Run resync, or open those cards once in game.")
+                                  "Open those cards once in game.")
                                % (len(missing), missing[0]))
         # 分层素材单独收进 layers/<卡号>/。文件名固定成 art.<后缀> / subject.<后缀>，
         # 免得两张素材同名时互相覆盖；给人看的原名放在 art_name / subject_name 里。

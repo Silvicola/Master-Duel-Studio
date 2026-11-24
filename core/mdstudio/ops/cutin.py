@@ -487,7 +487,7 @@ def is_cloned(ctx, mrk: int) -> bool:
 
 
 def list_cards(game, journal, cat=None, gate=None):
-    """[(mrk, status)] status: game / yours / wiped (更新把 gate 重置了, 跑 resync)"""
+    """[(mrk, status)] status: game / yours / wiped (更新把 gate 重置了, 需要重做)"""
     from mdstudio.core.gate import CutinGate
     gate = gate or CutinGate(game)
     live = gate.mrks()

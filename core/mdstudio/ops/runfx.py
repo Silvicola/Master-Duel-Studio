@@ -256,7 +256,7 @@ def remove(ctx, target: int):
 
 def set_sound(ctx, card: int, label: str):
     """给自己加的特效换音效 label (不重建视频/bundle). 空 = 静音
-    坑: seLabel 在 runfx_sig 里, gate 和 journal 必须一起改, 不然撤销/resync 认不出这条"""
+    坑: seLabel 在 runfx_sig 里, gate 和 journal 必须一起改, 不然撤销时认不出这条"""
     from mdstudio.core.gate import RunFxGate, runfx_sig
     from mdstudio.ops import sound as S
     label = (label or "").strip()
@@ -285,7 +285,7 @@ def set_sound(ctx, card: int, label: str):
         S.sync_se_label(ctx, card, gate.for_card(card))
         gate.save(ctx)
     else:
-        log.warning(tr("%s: effect isn't in the game's list right now (game update?), run resync"), card)
+        log.warning(tr("%s: effect isn't in the game's list right now (game update?), redo that card"), card)
     log.info(tr("effect sound of %s -> %s"), card, label or tr("(silent)"))
 
 

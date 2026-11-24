@@ -595,7 +595,7 @@ def set_framing(ctx, card: int, max_size: float):
     rec = recs[-1]
     p = ctx.game.find_logical(effect_path(rec.meta["effect_id"]))
     if not p:
-        raise AssetMissing(tr("effect bundle is gone, run resync"))
+        raise AssetMissing(tr("effect bundle is gone, redo that card"))
     cols, rows = rec.meta["grid"]
     env = UnityPy.load(p.read_bytes())
     # 坑: bundle 里还有别的粒子开着 UVModule, 按自己图集的格子数认主粒子, 别改错

@@ -1,6 +1,6 @@
 """哪张卡有 cut-in / 发动效果, 是游戏自带的还是我们加的
 
-状态: game (官方) / yours (本工具加的) / wiped (本工具加过, 被更新清掉了, 跑 resync) / None
+状态: game (官方) / yours (本工具加的) / wiped (本工具加过, 被更新清掉了, 需要重做) / None
 """
 from dataclasses import dataclass, field
 

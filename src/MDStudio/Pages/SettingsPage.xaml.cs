@@ -18,7 +18,7 @@ public sealed partial class SettingsPage : Page
     private bool _loading;
     /// <summary>本实例已经取过数。页面开了 NavigationCacheMode=Required，切走再回来
     /// 是同一个实例，不该再跑一遍 LoadAsync（否则账号/组件那几块会闪回「读取中…」）。
-    /// 设置页内改目录、切账号、重新同步那些按钮会显式调 LoadAsync，不受这个标记影响。</summary>
+    /// 设置页内改目录、切账号、一键复原那些按钮会显式调 LoadAsync，不受这个标记影响。</summary>
     private bool _loaded;
 
     // --------------------------------------------------------------- 额外组件
@@ -875,104 +875,89 @@ public sealed partial class SettingsPage : Page
         await LoadAsync();
     }
 
-    // --------------------------------------------------------------- 重新同步
-    private async void Resync_Click(object sender, RoutedEventArgs e)
+    // --------------------------------------------------------------- 一键复原
+    /// <summary>把本工具做过的超框、动画、特效（含换过的音效）一次撤完。
+    ///
+    /// 先取一次数量再问：确认框上要写清会撤多少张卡、各几处，只弹一句
+    /// 「确定吗」用户没法判断该不该先导出整合包。撤完记录与基线一起删掉，
+    /// 所以这个动作不可逆，导出提醒必须放在确认框里，不能只放说明文字。
+    /// 壁纸不在范围内（它写的是 data.unity3d，走壁纸页的还原）。</summary>
+    private async void RestoreAll_Click(object sender, RoutedEventArgs e)
     {
         if (App.Engine is not { } engine) return;
 
-        ResyncButton.IsEnabled = false;
-        ResyncBusy.Visibility = Visibility.Visible;
-        ResyncRing.Visibility = Visibility.Visible;
-        ResyncStatus.Text = App.DryRun ? "检查中（预演）…" : "检查中…";
-
+        RestoreButton.IsEnabled = false;
         try
         {
-            var data = await engine.CallAsync("tx.resync", new { dry_run = App.DryRun });
-            ResyncRing.Visibility = Visibility.Collapsed;
-            await ShowResyncResultAsync(data);
+            var pending = await engine.CallAsync("history.restore_all", new { preview = true });
+            int total = Count(pending, "total");
+            if (total == 0)
+            {
+                await InfoAsync("没有可复原的改动", "这个账号下没有本工具做过的超框、动画或特效。");
+                return;
+            }
+
+            var parts = new List<string>();
+            foreach (var (key, label) in new[]
+                     { ("art", "超框"), ("cutin", "动画"), ("runfx", "特效"), ("sound", "音效") })
+            {
+                int n = Count(pending, "by_kind", key);
+                if (n > 0) parts.Add($"{label} {n} 张");
+            }
+
+            var body = $"会复原 {total} 张卡：{string.Join("、", parts)}。\n"
+                     + "复原会把记录一起清掉，之后只能靠整合包装回来。";
+            var ok = await ConfirmAsync("一键复原？", body, "已导出，开始复原",
+                note: "是否已经导出整合包？没有导出的话，复原完就找不回来了。");
+            if (!ok) return;
+
+            RestoreBusy.Visibility = Visibility.Visible;
+            RestoreRing.Visibility = Visibility.Visible;
+            RestoreStatus.Text = App.DryRun ? "复原中（预演）…" : "复原中…";
+
+            var r = await engine.CallAsync("history.restore_all", new { });
+            RestoreRing.Visibility = Visibility.Collapsed;
+            int done = Count(r, "total");
+            int files = Count(r, "files");
+            RestoreStatus.Text = App.DryRun
+                ? "预演结束，没有写游戏文件"
+                : $"已复原 {done} 张卡，还原 {files} 个文件";
+
+            await InfoAsync(App.DryRun ? "预演完成" : "复原完成",
+                App.DryRun ? "流程跑通了，没有写游戏文件。" : $"{done} 张卡已回到改动前的样子。",
+                note: "准备更新游戏的话，去 Steam 验证一次文件完整性；更新完再装回整合包。");
             await LoadAsync();
         }
         catch (EngineException ex) when (ex.Kind == "Canceled")
         {
-            ResyncRing.Visibility = Visibility.Collapsed;
-            ResyncStatus.Text = "已取消";
+            RestoreRing.Visibility = Visibility.Collapsed;
+            RestoreStatus.Text = "已取消";
         }
         catch (Exception ex)
         {
-            ResyncRing.Visibility = Visibility.Collapsed;
-            ResyncStatus.Text = "失败：" + ex.Message;
-            await InfoAsync("重新同步失败", ex.Message, danger: true);
+            RestoreRing.Visibility = Visibility.Collapsed;
+            RestoreStatus.Text = "失败：" + ex.Message;
+            await InfoAsync("一键复原失败", ex.Message, danger: true);
         }
         finally
         {
-            ResyncButton.IsEnabled = true;
+            RestoreButton.IsEnabled = true;
         }
     }
 
-    /// <summary>把 resync 报告翻成人话。只有需要用户动手的项才弹窗，其余进状态行。</summary>
-    private async Task ShowResyncResultAsync(JsonElement r)
+    private static int Count(JsonElement obj, string key) => Count(obj, null, key);
+
+    /// <summary>取一个整数字段；sub 不为空时先下钻一层（by_kind 那层）。</summary>
+    private static int Count(JsonElement obj, string? sub, string key)
     {
-        var cutins = Strings(r, "cutin");
-        var fx = Strings(r, "runfx");
-        var fixes = Int(r, "catalog");
-        var moved = Strings(r, "moved").Count;
-        var lost = Strings(r, "lost_files");
-        // 卡图登记表只修一种：我们自己做过的卡丢了登记。
-        var art = Strings(r, "overframe").Count;
-
-        // broken 的键是卡号，值是缺的依赖名。按卡聚起来才是用户能看懂的单位，
-        // 逐个文件报 88 条 hash 路径没人看得下去。
-        var broken = new List<string>();
-        if (r.TryGetProperty("broken", out var b) && b.ValueKind == JsonValueKind.Object)
-            broken.AddRange(b.EnumerateObject().Select(p => p.Name));
-
-        if (cutins.Count == 0 && fx.Count == 0 && fixes == 0 && moved == 0
-            && lost.Count == 0 && art == 0)
+        if (obj.ValueKind != JsonValueKind.Object) return 0;
+        var node = obj;
+        if (sub is not null)
         {
-            ResyncStatus.Text = "没有需要补的，游戏清单和历史现在一致。";
-            return;
+            if (!obj.TryGetProperty(sub, out node) || node.ValueKind != JsonValueKind.Object) return 0;
         }
-
-        // 只报真正修了的项，避免"补回召唤动画 0 处、发动特效 0 处"这种话
-        var parts = new List<string>();
-        if (cutins.Count > 0) parts.Add($"补回召唤动画 {cutins.Count} 处");
-        if (fx.Count > 0) parts.Add($"补回发动特效 {fx.Count} 处");
-        if (fixes > 0) parts.Add($"修订清单 {fixes} 项");
-        if (moved > 0) parts.Add($"搬移文件 {moved} 个");
-        if (art > 0) parts.Add($"重新登记超框 {art} 张");
-        ResyncStatus.Text = App.DryRun
-            ? "预演结束，没有写游戏文件"
-            : parts.Count > 0 ? string.Join("，", parts) : "检查完成，有几处需要处理";
-
-        var todo = new List<string>();
-        if (broken.Count > 0)
-        {
-            var cards = broken.Count > 8
-                ? string.Join("、", broken.Take(8)) + $" 等 {broken.Count} 张"
-                : string.Join("、", broken);
-            todo.Add($"以下卡缺文件，需要移除后重新添加：{cards}");
-        }
-        if (lost.Count > 0 && broken.Count == 0)
-            todo.Add($"有 {lost.Count} 个文件在更新后不见了，相关卡需要重做。");
-
-        foreach (var c in Strings(r, "game_took_over"))
-            todo.Add($"卡 {c}：游戏已自带官方版本，你的改动被跳过。");
-        foreach (var lb in Strings(r, "sound_reset"))
-            todo.Add($"音效 {lb}：游戏更新换掉了原文件，你的 WAV 需要重新注入。");
-
-        // 结果改成弹窗：上面写这次补了什么，下面提示条写要你处理什么。
-        // 只有底部一行字的话，跑完这几十项修复用户根本不知道发生过什么。
-        var body = parts.Count > 0
-            ? "这次补了：" + string.Join("、", parts) + "。"
-            : "这次没有改动游戏文件。";
-        if (App.DryRun) body += "\n预演模式：没有写游戏文件。";
-
-        var title = todo.Count > 0 ? "同步完成，有几处需要处理" : "同步完成";
-        if (App.DryRun) title = title.Replace("同步", "预演");
-
-        await InfoAsync(title, body,
-            danger: broken.Count > 0,
-            note: todo.Count > 0 ? string.Join("\n", todo) : null);
+        return node.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number
+            ? v.GetInt32() : 0;
     }
 
     private static List<string> Strings(JsonElement obj, string key)
@@ -995,8 +980,11 @@ public sealed partial class SettingsPage : Page
     private Task InfoAsync(string title, string body, bool danger = false, string? note = null)
         => Dialogs.InfoAsync(XamlRoot, title, body, danger, null, null, note);
 
+    private Task<bool> ConfirmAsync(string title, string body, string primary, string? note = null)
+        => Dialogs.ConfirmAsync(XamlRoot, title, body, primary, null, null, note);
+
     // --------------------------------------------------------------- 卡片数据
-    /// <summary>重建中：挡住重复点击，也避免和「重新同步」抢引擎线程。</summary>
+    /// <summary>重建中：挡住重复点击，也避免和「一键复原」抢引擎线程。</summary>
     private bool _indexBusy;
 
     private async Task LoadIndexAsync()

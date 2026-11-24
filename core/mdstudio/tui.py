@@ -430,7 +430,6 @@ class Tui:
         out.append(Act("── everything ──"))
         out += [
             Act(tr("My cards (everything this tool changed)"), self.a_mine, write=False),
-            Act(tr("Resync after a game update"), self.a_resync),
             Act(tr("Undo a change…"), self.a_undo),
             Act(tr("Export my work as a pack…"), self.a_pack_export),
             Act(tr("Install a pack…"), self.a_pack_install),
@@ -446,7 +445,6 @@ class Tui:
         vid = _has("cv2")
         out = []
         if ci.cutin == "wiped":
-            out.append(Act(tr("Put the cut-in back (resync)"), self.a_resync))
             out.append(Act(tr("Forget this cut-in (remove)"), self.a_cutin_remove))
         elif ci.cutin is None:
             if ci.sibling_cutin:
@@ -475,7 +473,6 @@ class Tui:
         vid = _has("cv2")
         out = []
         if ci.runfx == "wiped":
-            out.append(Act(tr("Put the effect back (resync)"), self.a_resync))
             out.append(Act(tr("Forget this effect (remove)"), self.a_fx_remove))
         elif ci.runfx is None:
             if ci.sibling_runfx:
@@ -722,23 +719,6 @@ class Tui:
                 for r in recs]
         self._choose(tr("Undo which change? (newest first)"), rows,
                      lambda rid: self.run_op(f"{tr('undo')} {rid}", undo_ids, [rid]), searchable=True)
-
-    def a_resync(self):
-        from mdstudio.ops.tx import resync
-
-        def show(r):
-            self.say(f"{tr('cut-ins back')}：{r['cutin'] or '-'}   {tr('effects back')}：{r['runfx'] or '-'}   "
-                     f"{tr('manifest fixed')}：{r['catalog']}")
-            for f in r["lost_files"]:
-                self.say(f"{tr('LOST')} {f}（{tr('make that card again')}）", logging.ERROR)
-            for c in r.get("broken", []):
-                self.say(f"{tr('BROKEN')} {c}（{tr('remove it and add it again')}）", logging.ERROR)
-            for c in r.get("game_took_over", []):
-                self.say(f"{c}：{tr('the game now has its own version, yours was left off')}", logging.WARNING)
-            for lb in r.get("sound_reset", []):
-                self.say(f"{tr('effect sound')} {lb} {tr('was updated by the game, your WAV is gone (restore it, then replace again)')}",
-                         logging.WARNING)
-        self.run_op(tr("resync"), resync, done=show)
 
     def a_pack_export(self):
         from mdstudio.ops import pack as P
