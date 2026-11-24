@@ -403,7 +403,6 @@
                                 VerticalAlignment="Center"
                                 Click="RestoreAll_Click"
                                 Content="快捷复原"
-                                IsEnabled="False"
                                 Style="{StaticResource AccentButtonStyle}" />
                         </Grid>
                         <StackPanel
