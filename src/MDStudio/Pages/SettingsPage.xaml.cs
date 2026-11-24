@@ -111,6 +111,10 @@ public sealed partial class SettingsPage : Page
             // 引擎在动作开始那一刻就把开关读进参数了，中途改只影响下一次。
             CompatSdSwitch.IsEnabled = !busy;
             CompatSdHint.Text = busy ? SdHintBusy : SdHintIdle;
+            // 有生成 / 装包 / 复原在跑时不能开始另一批复原：引擎那边虽然排队，
+            // 但界面会让人以为两块同时在动，而且复原删的文件可能正是那次生成刚写进去的
+            // （2026-11-25 用户提出）。这里跟着主任务槽一起锁。
+            RestoreButton.IsEnabled = !busy;
             if (busy)
                 GameHint.Text = BusyHint;
             else if (GameHint.Text == BusyHint)
@@ -942,7 +946,8 @@ public sealed partial class SettingsPage : Page
         }
         finally
         {
-            RestoreButton.IsEnabled = true;
+            // 不直接置 true：我们自己这次复原也是主任务，忙完才轮到解锁。
+            OnMainBusy();
         }
     }
 
