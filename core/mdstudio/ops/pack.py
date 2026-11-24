@@ -572,6 +572,12 @@ def _install(ctx, meta, read, batch, selected=None, notes=None):
             tx.set_catalog(n, deps)
         if kind == "cutin":
             tx.add_cutin(mrk)
+            # 超框变体（官方动画★，如 22804 借 14952）还要把 of_card_asset 里那条
+            # 「借底图」改成自映射，否则游戏仍去读底图那套，装上去等于白装。
+            # 生成侧一直有这一步（cutin.clone / cutin_flip / spine 都调了），安装侧
+            # 以前漏了：本机生成的能播、导出再装回同一台机器反而变回原版（2026-11-24
+            # 用户实测，22559 这种本来就有自己动画的卡不受影响，所以一直没被发现）。
+            C.own_anim(tx, mrk)
         elif runfx:
             entries = [_safe_runfx(tx.runfx_gate, mrk, e) for e in runfx]
             lost = [e["effectPath"] for e in entries if e.get("effectPath") and not R.effect_file(tx.game, e["effectPath"])
