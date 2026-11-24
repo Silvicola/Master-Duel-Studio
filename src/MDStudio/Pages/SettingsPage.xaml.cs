@@ -655,10 +655,13 @@ public sealed partial class SettingsPage : Page
         _ = RefreshPreviewCacheAsync();
         if (_loaded)
         {
-            // 版本号与四项统计都会被别的页面改掉（生成、复原、装包），回来时补一次。
-            // 两条都是毫秒级，组件那几块继续沿用上次结果，不会闪回「读取中…」。
+            // 版本号、四项统计、可复原项都会被别的页面改掉（生成、复原、装包），
+            // 回来时补一次。三条都是毫秒级，组件那几块继续沿用上次结果，不会闪回「读取中…」。
+            // 可复原项漏刷过一次：在卡图页做完超框再回设置页，还显示「没有可复原的改动」
+            // （2026-11-24 用户实测）。
             if (App.Engine is { } again)
-                await Task.WhenAll(LoadInfoAsync(again), LoadStatsAsync(again));
+                await Task.WhenAll(LoadInfoAsync(again), LoadStatsAsync(again),
+                                   LoadRestoreSummaryAsync(again));
             return;
         }
         _loaded = true;
