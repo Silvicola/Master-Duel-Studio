@@ -227,14 +227,23 @@ def _history_undo(ctx, ids):
 
 
 @register("history.restore_all")
-def _history_restore_all(ctx, preview=False, kinds=None):
-    """快捷复原：把本工具写进游戏的改动撤掉，可按类只撤一部分。
+def _history_restore_all(ctx, preview=False, picks=None):
+    """快捷复原：撤掉本工具写进游戏的改动，可按勾选的行只撤一部分。
 
-    preview 只数一遍（三个勾选框的数量与确认框都靠它），不碰游戏文件。
-    kinds 是 {"art", "cutin", "runfx"} 的子集，不给等于三类全撤。
+    preview 只数一遍（勾选列表就用它的结果），不碰游戏文件。
+    picks 是 [{"card", "kind"}]，不给等于全部。
     """
     from mdstudio.ops.tx import restore_all, restore_pending
-    return restore_pending(ctx, kinds=kinds) if preview else restore_all(ctx, kinds=kinds)
+    data = restore_pending(ctx, picks=picks) if preview else restore_all(ctx, picks=picks)
+    # 勾选列表上要写卡名，前端没有卡库，这里补上。
+    try:
+        from mdstudio.core.cards import CardDB
+        db = CardDB(ctx.game).load()
+        for it in data.get("items") or []:
+            it["name"] = db.name(int(it["card"])) or ""
+    except Exception:
+        pass
+    return data
 
 
 @register("schemes.save")

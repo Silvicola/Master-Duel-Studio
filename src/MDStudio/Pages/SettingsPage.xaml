@@ -326,7 +326,11 @@
                     <ColumnDefinition Width="1*" MinWidth="300" />
                 </Grid.ColumnDefinitions>
 
-                <ContentControl Padding="20" Style="{StaticResource PanelCard}">
+                <!--  两张卡各按内容高度，不互相拉平：维护那边文案长，拉平会把左边撑出一大片空白  -->
+                <ContentControl
+                    Padding="20"
+                    VerticalAlignment="Top"
+                    Style="{StaticResource PanelCard}">
                     <StackPanel Spacing="12">
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <Border Background="#2422A06B" Style="{StaticResource GroupIconBox}">
@@ -359,6 +363,7 @@
                 <ContentControl
                     Grid.Column="1"
                     Padding="20"
+                    VerticalAlignment="Top"
                     Style="{StaticResource PanelCard}">
                     <StackPanel Spacing="12">
                         <StackPanel Orientation="Horizontal" Spacing="10">
@@ -380,29 +385,22 @@
                                 Text="壁纸不在复原范围内，需要的话到壁纸页单独还原。"
                                 TextWrapping="Wrap" />
                         </StackPanel>
-                        <Grid ColumnSpacing="12">
+                        <Grid ColumnSpacing="12" Margin="0,2,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="2">
-                                <CheckBox
-                                    x:Name="RestoreArtCheck"
-                                    Click="RestoreKind_Changed"
-                                    Content="超框卡图" />
-                                <CheckBox
-                                    x:Name="RestoreCutinCheck"
-                                    Click="RestoreKind_Changed"
-                                    Content="召唤动画" />
-                                <CheckBox
-                                    x:Name="RestoreRunfxCheck"
-                                    Click="RestoreKind_Changed"
-                                    Content="发动特效" />
-                            </StackPanel>
+                            <TextBlock
+                                x:Name="RestoreHint"
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="当前账号没有可复原的改动"
+                                TextWrapping="Wrap" />
                             <Button
                                 x:Name="RestoreButton"
                                 Grid.Column="1"
-                                VerticalAlignment="Top"
+                                VerticalAlignment="Center"
                                 Click="RestoreAll_Click"
                                 Content="快捷复原"
                                 IsEnabled="False"

@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using MDStudio.Services;
 using Windows.UI;
@@ -690,7 +692,7 @@ public sealed partial class SettingsPage : Page
             //    用户第一眼看到的就是「组件已装/未装」。
             await Task.WhenAll(LoadAssetsAsync(), LoadAccountAsync(engine));
             // ② 关于：版本号与四项统计，两条都是毫秒级，并行发
-            await Task.WhenAll(LoadInfoAsync(engine), LoadStatsAsync(engine), LoadRestoreCountsAsync(engine));
+            await Task.WhenAll(LoadInfoAsync(engine), LoadStatsAsync(engine), LoadRestoreSummaryAsync(engine));
         }
         catch (Exception ex)
         {
@@ -876,50 +878,42 @@ public sealed partial class SettingsPage : Page
     }
 
     // --------------------------------------------------------------- 快捷复原
-    /// <summary>把勾选的那几类改动一次撤完：超框、动画、特效，音效跟着特效走。
+    /// <summary>勾选着复原：列出本工具做过的每一项改动，勾哪几项撤哪几项。
     ///
-    /// 三个勾选框上写着各有多少张，只勾一类时确认框也只报这一类。撤完记录与
-    /// 基线一起删掉，所以不可逆，导出提醒必须放进确认框，不能只放说明文字。
+    /// 不出现在界面上直接撤的按钮：复原会连记录带基线一起删掉，不可逆，
+    /// 必须让用户先看见「要撤的是哪几张卡」，顺手把导出整合包的提醒放在同一屏。
     /// 壁纸不在范围内（它写的是 data.unity3d，走壁纸页的还原）。</summary>
     private async void RestoreAll_Click(object sender, RoutedEventArgs e)
     {
         if (App.Engine is not { } engine) return;
-        var kinds = SelectedKinds();
-        if (kinds.Count == 0) return;
 
         RestoreButton.IsEnabled = false;
         try
         {
-            // 按勾选再取一次数量：页面开着时别处可能又改过卡，用旧数字会报错账。
-            var pending = await engine.CallAsync("history.restore_all",
-                new { preview = true, kinds });
-            int total = Count(pending, "total");
-            if (total == 0)
+            var items = ParseRestoreItems(
+                await engine.CallAsync("history.restore_all", new { preview = true }));
+            if (items.Count == 0)
             {
-                await InfoAsync("没有可复原的改动", "所选类别在当前账号下没有改动。");
-                await LoadAsync();
+                await InfoAsync("没有可复原的改动",
+                    "这个账号的历史里没有本工具做过的改动。\n\n"
+                    + "如果游戏里确实还有自定义的动画或特效，说明那些改动是在另一个程序目录里做的："
+                    + "把那个目录的 data 文件夹复制到现在这个目录，再回来点一次。",
+                    note: "历史记录与基线都存放在 data 文件夹里，换目录时一起搬过来才认得出。");
                 return;
             }
 
-            var parts = new List<string>();
-            foreach (var (key, label) in KindLabels)
-            {
-                if (!kinds.Contains(key)) continue;
-                int n = Count(pending, "by_kind", key);
-                if (n > 0) parts.Add($"{label} {n} 张");
-            }
+            var picked = await Dialogs.PickAsync(XamlRoot, "快捷复原",
+                "勾选要复原的改动，可以只撤其中几项。",
+                "复原会把记录和基线一起清掉，之后只能靠整合包装回来。是否已经导出整合包？",
+                items, "复原所选", KindLabel);
+            if (picked is null || picked.Count == 0) return;
 
-            var body = $"会复原 {total} 张卡：{string.Join("、", parts)}。\n"
-                     + "复原会把记录一起清掉，之后只能靠整合包装回来。";
-            var ok = await ConfirmAsync("快捷复原？", body, "已导出，开始复原",
-                note: "是否已经导出整合包？没有导出的话，复原完就找不回来了。");
-            if (!ok) return;
-
+            var picks = picked.Select(i => new { card = i.Card, kind = i.Kind }).ToArray();
             RestoreBusy.Visibility = Visibility.Visible;
             RestoreRing.Visibility = Visibility.Visible;
             RestoreStatus.Text = App.DryRun ? "复原中（预演）…" : "复原中…";
 
-            var r = await engine.CallAsync("history.restore_all", new { kinds });
+            var r = await engine.CallAsync("history.restore_all", new { picks });
             RestoreRing.Visibility = Visibility.Collapsed;
             int done = Count(r, "total");
             int files = Count(r, "files");
@@ -945,58 +939,60 @@ public sealed partial class SettingsPage : Page
         }
         finally
         {
-            UpdateRestoreButton();
+            RestoreButton.IsEnabled = true;
         }
     }
 
-    /// <summary>三个勾选框与后端的 kind 键。</summary>
-    private static readonly (string Key, string Label)[] KindLabels =
+    /// <summary>后端那三类改动在界面上的叫法。</summary>
+    private static string KindLabel(string kind) => kind switch
     {
-        ("art", "超框"), ("cutin", "动画"), ("runfx", "特效"),
+        "art" => "超框卡图",
+        "cutin" => "召唤动画",
+        "runfx" => "发动特效",
+        _ => kind,
     };
 
-    private List<string> SelectedKinds()
+    /// <summary>把预览结果摊成勾选列表的一行行。</summary>
+    private static List<Dialogs.PickItem> ParseRestoreItems(JsonElement r)
     {
-        var kinds = new List<string>();
-        if (RestoreArtCheck.IsChecked == true) kinds.Add("art");
-        if (RestoreCutinCheck.IsChecked == true) kinds.Add("cutin");
-        if (RestoreRunfxCheck.IsChecked == true) kinds.Add("runfx");
-        return kinds;
-    }
-
-    private void RestoreKind_Changed(object sender, RoutedEventArgs e) => UpdateRestoreButton();
-
-    /// <summary>一类都没勾就不让点，避免弹出一个「会复原 0 张」的框。</summary>
-    private void UpdateRestoreButton() => RestoreButton.IsEnabled = SelectedKinds().Count > 0;
-
-    /// <summary>把各类有多少张写到勾选框上；0 张的直接置灰并取消勾选。</summary>
-    private void ApplyRestoreCounts(JsonElement pending)
-    {
-        foreach (var (check, key, label) in new[]
-                 {
-                     (RestoreArtCheck, "art", "超框卡图"),
-                     (RestoreCutinCheck, "cutin", "召唤动画"),
-                     (RestoreRunfxCheck, "runfx", "发动特效"),
-                 })
+        var list = new List<Dialogs.PickItem>();
+        if (r.ValueKind != JsonValueKind.Object || !r.TryGetProperty("items", out var arr)
+            || arr.ValueKind != JsonValueKind.Array)
+            return list;
+        foreach (var it in arr.EnumerateArray())
         {
-            int n = Count(pending, "by_kind", key);
-            check.Content = $"{label}  {n} 张";
-            check.IsEnabled = n > 0;
-            check.IsChecked = n > 0;
+            int card = Count(it, "card");
+            string kind = Str(it, "kind");
+            if (card <= 0 || kind.Length == 0) continue;
+            list.Add(new Dialogs.PickItem(card, Str(it, "name"), kind, Count(it, "files")));
         }
-        UpdateRestoreButton();
+        return list;
     }
 
-    /// <summary>三个勾选框上的数量。就是读一遍 journal，毫秒级。</summary>
-    private async Task LoadRestoreCountsAsync(EngineClient engine)
+    /// <summary>卡片上方那行小字：一共几项、各是什么。按钮也按它亮灭。</summary>
+    private void ApplyRestoreSummary(List<Dialogs.PickItem> items)
+    {
+        // 没有可复原项时按钮仍然可点：点下去会说明「为什么是 0」以及怎么把历史找回来，
+        // 直接置灰的话用户只会觉得功能坏了（2026-11-24 用户实测）。
+        if (items.Count == 0)
+        {
+            RestoreHint.Text = "当前账号没有可复原的改动";
+            return;
+        }
+        var parts = items.GroupBy(i => i.Kind).Select(g => $"{KindLabel(g.Key)} {g.Count()} 项");
+        RestoreHint.Text = $"共 {items.Count} 项可复原：" + string.Join("、", parts);
+    }
+
+    private async Task LoadRestoreSummaryAsync(EngineClient engine)
     {
         try
         {
-            ApplyRestoreCounts(await engine.CallAsync("history.restore_all", new { preview = true }));
+            ApplyRestoreSummary(ParseRestoreItems(
+                await engine.CallAsync("history.restore_all", new { preview = true })));
         }
         catch (Exception ex)
         {
-            App.AddLog("WARN", "读取可复原数量失败：" + ex.Message);
+            App.AddLog("WARN", "读取可复原项失败：" + ex.Message);
         }
     }
 

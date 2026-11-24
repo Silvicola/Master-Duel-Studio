@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -215,6 +217,156 @@ public static class Dialogs
         // 不可撤销的写入。把焦点先放到「取消／知道了」上，回车才是安全的。
         dlg.Opened += (_, _) => cancelButton.Focus(FocusState.Programmatic);
         return dlg;
+    }
+
+    // ------------------------------------------------------------------ 勾选列表
+    /// <summary>勾选列表里的一行：一张卡的一种改动。</summary>
+    public sealed record PickItem(int Card, string Name, string Kind, int Files)
+    {
+        public string Key => $"{Card}|{Kind}";
+    }
+
+    /// <summary>
+    /// 勾选列表式确认框。返回勾中的行；点取消或 Esc 返回 null。
+    ///
+    /// 为什么单独一个方法：快捷复原要按行挑，纯文字确认框装不下。三页通用的
+    /// ConfirmAsync 只管「确定/取消」，塞一个列表进去会把它的骨架撑变形。
+    /// 版式沿用同一套：标题、说明、提示条、按钮都靠右。
+    /// </summary>
+    public static async Task<List<PickItem>?> PickAsync(XamlRoot? root, string title, string body,
+                                                       string note, IReadOnlyList<PickItem> rows,
+                                                       string primaryText,
+                                                       Func<string, string>? kindLabel = null)
+    {
+        var xr = Root(root);
+        if (xr is null)
+        {
+            App.AddLog("ERROR", $"勾选列表未显示：{title}");
+            return null;
+        }
+
+        var label = kindLabel ?? (k => k);
+        var panel = new StackPanel { Width = DialogWidth };
+        panel.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = body,
+            FontSize = 14,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        if (!string.IsNullOrWhiteSpace(note))
+        {
+            var noteText = new TextBlock
+            {
+                Text = note,
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            var noteBox = new Border
+            {
+                Padding = new Thickness(12, 8, 12, 8),
+                Margin = new Thickness(0, 14, 0, 0),
+                CornerRadius = new CornerRadius(4),
+                BorderThickness = new Thickness(3, 0, 0, 0),
+                Child = noteText,
+            };
+            if (ResBrush("SystemFillColorAttentionBackgroundBrush") is { } noteBg)
+                noteBox.Background = noteBg;
+            if (ResBrush("SystemFillColorAttentionBrush") is { } noteEdge)
+                noteBox.BorderBrush = noteEdge;
+            else
+                noteText.Opacity = 0.85;
+            panel.Children.Add(noteBox);
+        }
+
+        // 全选在前，逐行在后。列表本身限高滚动，卡多也不会把按钮顶出窗口。
+        var checks = new List<(CheckBox Box, PickItem Item)>();
+        var list = new StackPanel { Spacing = 2, Margin = new Thickness(0, 14, 0, 0) };
+        var all = new CheckBox { Content = $"全选（{rows.Count} 项）", IsChecked = true };
+        list.Children.Add(all);
+        foreach (var item in rows)
+        {
+            var text = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            text.Inlines.Add(new Run
+            {
+                Text = string.IsNullOrWhiteSpace(item.Name) ? $"#{item.Card}" : $"#{item.Card} {item.Name}",
+                FontSize = 14,
+            });
+            var meta = new Run { Text = $"　{label(item.Kind)} · {item.Files} 个文件", FontSize = 12.5 };
+            if (ResBrush("TextFillColorSecondaryBrush") is { } dim) meta.Foreground = dim;
+            text.Inlines.Add(meta);
+            var box = new CheckBox { Content = text, IsChecked = true, MinWidth = 0 };
+            checks.Add((box, item));
+            list.Children.Add(box);
+        }
+        panel.Children.Add(new ScrollViewer
+        {
+            Content = list,
+            MaxHeight = 260,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        });
+
+        var primary = new Button { MinWidth = ButtonMinWidth };
+        var cancel = new Button { MinWidth = ButtonMinWidth };
+        panel.Children.Add(new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Margin = new Thickness(0, 20, 0, 0),
+            Children = { primary, cancel },
+        });
+
+        var result = new TaskCompletionSource<List<PickItem>?>();
+
+        // 勾选数直接写在按钮上，用户不用自己数还剩几行。
+        void Sync()
+        {
+            int n = checks.Count(c => c.Box.IsChecked == true);
+            primary.Content = n > 0 ? $"{primaryText}（{n}）" : primaryText;
+            primary.IsEnabled = n > 0;
+        }
+
+        foreach (var (box, _) in checks)
+            box.Checked += (_, _) => { Sync(); if (all.IsChecked != true) all.IsChecked = null; };
+        foreach (var (box, _) in checks)
+            box.Unchecked += (_, _) =>
+            {
+                Sync();
+                if (checks.All(c => c.Box.IsChecked == true)) all.IsChecked = true;
+                else if (checks.All(c => c.Box.IsChecked != true)) all.IsChecked = false;
+                else all.IsChecked = null;
+            };
+        all.Checked += (_, _) => { foreach (var (b, _) in checks) b.IsChecked = true; Sync(); };
+        all.Unchecked += (_, _) => { foreach (var (b, _) in checks) b.IsChecked = false; Sync(); };
+        all.IsThreeState = true;
+
+        primary.Content = primaryText;
+        primary.Style = ResStyle("AccentButtonStyle");
+        primary.Click += (_, _) =>
+        {
+            result.TrySetResult(checks.Where(c => c.Box.IsChecked == true).Select(c => c.Item).ToList());
+        };
+        cancel.Content = "取消";
+        cancel.Click += (_, _) => { result.TrySetResult(null); };
+
+        var dlg = new ContentDialog { Content = Scroll(xr, panel), XamlRoot = xr };
+        primary.Click += (_, _) => dlg.Hide();
+        cancel.Click += (_, _) => dlg.Hide();
+        // 焦点先给取消：回车不该把一批改动撤掉。
+        dlg.Opened += (_, _) => cancel.Focus(FocusState.Programmatic);
+        Sync();
+        await ShowAsync(dlg, title, body);
+        return result.Task.IsCompleted ? result.Task.Result : null;
     }
 
     /// <summary>

@@ -586,47 +586,66 @@ def _restorable(ctx) -> list:
     return out
 
 
-def restore_pending(ctx, kinds=None) -> dict:
+def restore_pending(ctx, picks=None) -> dict:
     """快捷复原会动哪些卡、多少文件。只读 journal，不碰游戏文件。
 
-    三个勾选框的数量与确认框都取自这里，所以这条查询必须便宜且无副作用。
-    kinds 不给就是三类全算。
+    确认框与勾选列表都取自这里，所以这条查询必须便宜且无副作用。
+    picks 不给就是全部。每一项是「一张卡的一种改动」，界面上就是一行。
     """
-    return _restore_summary(_pick(_restorable(ctx), kinds)[0])
+    return _restore_summary(_pick(_restorable(ctx), picks)[0])
 
 
-def _pick(all_recs, kinds):
-    """按界面上那三个勾选框挑记录，返回 (要撤的, 不撤的)。
+def _pick(all_recs, picks=None):
+    """按界面上勾选的那些行挑记录，返回 (要撤的, 不撤的)。
 
-    不撤的那批必须原样交回给 undo 当 keep_records：它靠这个判断「还有别的改动
-    在用这些文件」，传空列表会把共享依赖当无主文件删掉。
+    picks 是 [{"card": 卡号, "kind": "art|cutin|runfx"}]；不撤的那批必须原样
+    交回给 undo 当 keep_records，它靠这个判断「还有别的改动在用这些文件」，
+    传空列表会把共享依赖当无主文件删掉。
     """
-    if not kinds:
+    if picks is None:
         return all_recs, []
-    fams = {f for k in kinds for f in _FAMILIES_OF_KIND.get(str(k), ())}
-    recs = [r for r in all_recs if family_for(r.op) in fams]
+    want = set()
+    for p in picks:
+        try:
+            want.add((int(p["card"]), str(p["kind"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not want:
+        # 给了勾选但一条都认不出来：宁可报「没有可撤的」，也别把全部撤了。
+        return [], list(all_recs)
+    recs = [r for r in all_recs if _row_key(r) in want]
     return recs, [r for r in all_recs if r not in recs]
 
 
+def _row_key(r):
+    """一条记录对应界面上的哪一行：(卡号, 类别)。音效并进特效。"""
+    fam = family_for(r.op)
+    return (int(r.card), _KIND_OF_FAMILY.get(fam, fam))
+
+
 def _restore_summary(recs) -> dict:
-    by_kind: dict = {}
+    items: dict = {}
     for r in recs:
-        fam = family_for(r.op)
-        k = _KIND_OF_FAMILY.get(fam, fam)
-        by_kind.setdefault(k, set()).add(int(r.card))
-    cards = sorted({int(r.card) for r in recs})
-    return {"cards": cards, "total": len(cards), "by_kind": {k: len(v) for k, v in by_kind.items()},
-            "files": sum(len(r.modified) + len(r.created) for r in recs)}
+        key = _row_key(r)
+        it = items.setdefault(key, {"card": key[0], "kind": key[1], "files": 0})
+        it["files"] += len(r.modified) + len(r.created)
+    rows = sorted(items.values(), key=lambda x: (x["kind"], x["card"]))
+    by_kind: dict = {}
+    for row in rows:
+        by_kind[row["kind"]] = by_kind.get(row["kind"], 0) + 1
+    cards = sorted({row["card"] for row in rows})
+    return {"items": rows, "cards": cards, "total": len(cards), "by_kind": by_kind,
+            "files": sum(row["files"] for row in rows)}
 
 
-def restore_all(ctx, kinds=None) -> dict:
-    """按类复原：撤掉本工具留在游戏里的改动，可选只撤某几类。
+def restore_all(ctx, picks=None) -> dict:
+    """按勾选复原：撤掉本工具留在游戏里的改动，可选只撤其中几行。
 
-    kinds 是 {"art", "cutin", "runfx"} 的子集，None 等于三类全撤。
+    picks 是 [{"card", "kind"}]，None 等于全部撤掉。
     历史页照常一张卡一行（2026-11-24 用户定稿：不压成一条汇总）。
     """
     ctx.guard()
-    recs, keep = _pick(_restorable(ctx), kinds)
+    recs, keep = _pick(_restorable(ctx), picks)
     if not recs:
         raise MDStudioError(tr("nothing to undo"))
     summary = _restore_summary(recs)

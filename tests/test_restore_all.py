@@ -77,29 +77,30 @@ def _rec(op, card, modified=0, created=0, meta=None):
     return r
 
 
-# --------------------------------------------------------------- 范围筛选
-def test_pending_counts_four_kinds_and_skips_wallpaper():
+# --------------------------------------------------------------- 勾选列表
+def test_pending_lists_one_row_per_card_and_kind():
+    """界面上每行是「一张卡的一种改动」；同卡同类的多条记录合成一行。"""
     recs = [
         _rec("cutin.video", 22804, modified=2),
+        _rec("cutin.reskin", 22804, modified=3),      # 同卡同类的后续改动
         _rec("runfx.video", 22159, created=5),
-        _rec("sound.custom", 22159, modified=1),      # 同卡音效，也算一处
+        _rec("sound.custom", 22159, modified=1),      # 音效并进特效那一行
         _rec("overframe.set", 10001, modified=1),
         _rec("wallpaper.set", 0, modified=1),          # 卡号 0：壁纸，不进
         _rec("undo", 10001, meta={"noop": True}),      # 只读留痕，不进
         _rec("pack.install", 0, meta={}),              # 汇总记录，不进
     ]
     out = TX.restore_pending(FakeCtx(recs))
-    assert out["total"] == 3
-    assert out["cards"] == [10001, 22159, 22804]
-    # 音效并进特效：界面上只有三个勾选框（2026-11-24 定稿）
-    assert out["by_kind"] == {"cutin": 1, "runfx": 1, "art": 1}
-    assert out["files"] == 2 + 5 + 1 + 1
+    rows = {(r["card"], r["kind"]): r["files"] for r in out["items"]}
+    assert rows == {(10001, "art"): 1, (22159, "runfx"): 6, (22804, "cutin"): 5}
+    assert out["total"] == 3 and out["files"] == 12
+    assert out["by_kind"] == {"art": 1, "cutin": 1, "runfx": 1}
 
 
-def test_wallpaper_card_is_not_touched():
+def test_wallpaper_card_is_not_listed():
     """壁纸写的是 data.unity3d，复原要重写整个包，交给壁纸页单独还原。"""
     out = TX.restore_pending(FakeCtx([_rec("wallpaper.set", 0, modified=1)]))
-    assert out == {"cards": [], "total": 0, "by_kind": {}, "files": 0}
+    assert out["items"] == [] and out["total"] == 0 and out["files"] == 0
 
 
 def test_nothing_to_restore_raises():
@@ -116,7 +117,6 @@ def captured(monkeypatch):
     def fake_undo(ctx, records, keep_records=(), trace=None):
         seen["records"] = records
         seen["keep"] = list(keep_records)
-        seen["trace"] = trace
         return 0
 
     monkeypatch.setattr(TX, "undo", fake_undo)
@@ -124,7 +124,7 @@ def captured(monkeypatch):
 
 
 def test_restore_all_passes_every_record_and_no_keep(captured):
-    """一次性全撤，不留 keep：这样共享依赖不会被过户给别的记录。"""
+    """全部行都勾上，等于一次全撤，keep 为空。"""
     recs = [_rec("cutin.video", 100, modified=1), _rec("overframe.set", 200, modified=1)]
     TX.restore_all(FakeCtx(recs))
     assert len(captured["records"]) == 2
@@ -155,47 +155,48 @@ def test_dry_run_does_not_roll_back_sound(captured, monkeypatch):
     assert hit == []
 
 
-# --------------------------------------------------------------- 按类复原
-def test_kinds_filter_only_selected_family(captured):
-    """只勾超框：只有超框记录进 undo，动画与特效原样留着。"""
+# --------------------------------------------------------------- 只撤勾选的行
+def test_picks_only_selects_that_row(captured):
+    """只勾超框那一行：只有超框记录进 undo，动画与特效原样留着。"""
     art = _rec("overframe.set", 100, modified=1)
     cutin = _rec("cutin.video", 200, created=2)
     fx = _rec("runfx.video", 300, created=3)
-    TX.restore_all(FakeCtx([art, cutin, fx]), kinds=["art"])
+    TX.restore_all(FakeCtx([art, cutin, fx]), picks=[{"card": 100, "kind": "art"}])
     assert captured["records"] == [art]
 
 
-def test_unselected_records_are_kept(captured):
-    """没选中的必须当 keep 传进去，否则共享依赖会被当无主文件删掉。"""
+def test_picks_keep_the_rest(captured):
+    """没勾的必须当 keep 传进去，否则共享依赖会被当无主文件删掉。"""
     art = _rec("overframe.set", 100, modified=1)
     cutin = _rec("cutin.video", 200, created=2)
-    TX.restore_all(FakeCtx([art, cutin]), kinds=["art"])
+    TX.restore_all(FakeCtx([art, cutin]), picks=[{"card": 100, "kind": "art"}])
     assert captured["keep"] == [cutin]
 
 
-def test_sound_goes_with_effects(captured, monkeypatch):
-    """勾特效时，同一批卡换过的音效一起撤。"""
+def test_picks_take_sound_with_the_effects_row(captured, monkeypatch):
+    """勾了特效那一行，同一张卡换过的音效一起撤。"""
     from mdstudio.ops import sound as S
 
     monkeypatch.setattr(S, "apply_origins", lambda ctx, card: 0)
     fx = _rec("runfx.video", 300, created=1)
     snd = _rec("sound.set", 300, modified=1)
-    art = _rec("overframe.set", 100, modified=1)
-    TX.restore_all(FakeCtx([fx, snd, art]), kinds=["runfx"])
+    other = _rec("runfx.video", 400, created=1)
+    TX.restore_all(FakeCtx([fx, snd, other]), picks=[{"card": 300, "kind": "runfx"}])
     assert [r.op for r in captured["records"]] == ["runfx.video", "sound.set"]
 
 
-def test_all_kinds_together_keep_nothing(captured):
-    """三类全勾等于以前的快捷复原，keep 为空。"""
-    recs = [_rec("overframe.set", 100, modified=1), _rec("cutin.video", 200, created=1)]
-    TX.restore_all(FakeCtx(recs), kinds=["art", "cutin", "runfx"])
-    assert len(captured["records"]) == 2 and captured["keep"] == []
-
-
-def test_selected_kind_with_no_records_raises(captured):
-    """选了超框但这台机器没有超框改动：报「没有可撤的」，不要空跑。"""
+def test_picks_for_unknown_row_raises(captured):
+    """勾了一行但这台机器上没有对应改动：报「没有可撤的」，不要空跑。"""
     with pytest.raises(MDStudioError):
-        TX.restore_all(FakeCtx([_rec("cutin.video", 200, created=1)]), kinds=["art"])
+        TX.restore_all(FakeCtx([_rec("cutin.video", 200, created=1)]),
+                       picks=[{"card": 999, "kind": "art"}])
+
+
+def test_garbage_picks_restore_nothing(captured):
+    """勾选数据一条都认不出来时不能退化成「全撤」。"""
+    cutin = _rec("cutin.video", 200, created=1)
+    with pytest.raises(MDStudioError):
+        TX.restore_all(FakeCtx([cutin]), picks=[{"card": "x"}, None, {"kind": "art"}])
 
 
 # ------------------------------------------------- 共用表：单卡复原也不能回填
