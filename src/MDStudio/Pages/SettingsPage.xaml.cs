@@ -18,7 +18,7 @@ public sealed partial class SettingsPage : Page
     private bool _loading;
     /// <summary>本实例已经取过数。页面开了 NavigationCacheMode=Required，切走再回来
     /// 是同一个实例，不该再跑一遍 LoadAsync（否则账号/组件那几块会闪回「读取中…」）。
-    /// 设置页内改目录、切账号、一键复原那些按钮会显式调 LoadAsync，不受这个标记影响。</summary>
+    /// 设置页内改目录、切账号、快捷复原那些按钮会显式调 LoadAsync，不受这个标记影响。</summary>
     private bool _loaded;
 
     // --------------------------------------------------------------- 额外组件
@@ -690,7 +690,7 @@ public sealed partial class SettingsPage : Page
             //    用户第一眼看到的就是「组件已装/未装」。
             await Task.WhenAll(LoadAssetsAsync(), LoadAccountAsync(engine));
             // ② 关于：版本号与四项统计，两条都是毫秒级，并行发
-            await Task.WhenAll(LoadInfoAsync(engine), LoadStatsAsync(engine));
+            await Task.WhenAll(LoadInfoAsync(engine), LoadStatsAsync(engine), LoadRestoreCountsAsync(engine));
         }
         catch (Exception ex)
         {
@@ -875,39 +875,43 @@ public sealed partial class SettingsPage : Page
         await LoadAsync();
     }
 
-    // --------------------------------------------------------------- 一键复原
-    /// <summary>把本工具做过的超框、动画、特效（含换过的音效）一次撤完。
+    // --------------------------------------------------------------- 快捷复原
+    /// <summary>把勾选的那几类改动一次撤完：超框、动画、特效，音效跟着特效走。
     ///
-    /// 先取一次数量再问：确认框上要写清会撤多少张卡、各几处，只弹一句
-    /// 「确定吗」用户没法判断该不该先导出整合包。撤完记录与基线一起删掉，
-    /// 所以这个动作不可逆，导出提醒必须放在确认框里，不能只放说明文字。
+    /// 三个勾选框上写着各有多少张，只勾一类时确认框也只报这一类。撤完记录与
+    /// 基线一起删掉，所以不可逆，导出提醒必须放进确认框，不能只放说明文字。
     /// 壁纸不在范围内（它写的是 data.unity3d，走壁纸页的还原）。</summary>
     private async void RestoreAll_Click(object sender, RoutedEventArgs e)
     {
         if (App.Engine is not { } engine) return;
+        var kinds = SelectedKinds();
+        if (kinds.Count == 0) return;
 
         RestoreButton.IsEnabled = false;
         try
         {
-            var pending = await engine.CallAsync("history.restore_all", new { preview = true });
+            // 按勾选再取一次数量：页面开着时别处可能又改过卡，用旧数字会报错账。
+            var pending = await engine.CallAsync("history.restore_all",
+                new { preview = true, kinds });
             int total = Count(pending, "total");
             if (total == 0)
             {
-                await InfoAsync("没有可复原的改动", "这个账号下没有本工具做过的超框、动画或特效。");
+                await InfoAsync("没有可复原的改动", "所选类别在当前账号下没有改动。");
+                await LoadAsync();
                 return;
             }
 
             var parts = new List<string>();
-            foreach (var (key, label) in new[]
-                     { ("art", "超框"), ("cutin", "动画"), ("runfx", "特效"), ("sound", "音效") })
+            foreach (var (key, label) in KindLabels)
             {
+                if (!kinds.Contains(key)) continue;
                 int n = Count(pending, "by_kind", key);
                 if (n > 0) parts.Add($"{label} {n} 张");
             }
 
             var body = $"会复原 {total} 张卡：{string.Join("、", parts)}。\n"
                      + "复原会把记录一起清掉，之后只能靠整合包装回来。";
-            var ok = await ConfirmAsync("一键复原？", body, "已导出，开始复原",
+            var ok = await ConfirmAsync("快捷复原？", body, "已导出，开始复原",
                 note: "是否已经导出整合包？没有导出的话，复原完就找不回来了。");
             if (!ok) return;
 
@@ -915,7 +919,7 @@ public sealed partial class SettingsPage : Page
             RestoreRing.Visibility = Visibility.Visible;
             RestoreStatus.Text = App.DryRun ? "复原中（预演）…" : "复原中…";
 
-            var r = await engine.CallAsync("history.restore_all", new { });
+            var r = await engine.CallAsync("history.restore_all", new { kinds });
             RestoreRing.Visibility = Visibility.Collapsed;
             int done = Count(r, "total");
             int files = Count(r, "files");
@@ -937,11 +941,62 @@ public sealed partial class SettingsPage : Page
         {
             RestoreRing.Visibility = Visibility.Collapsed;
             RestoreStatus.Text = "失败：" + ex.Message;
-            await InfoAsync("一键复原失败", ex.Message, danger: true);
+            await InfoAsync("快捷复原失败", ex.Message, danger: true);
         }
         finally
         {
-            RestoreButton.IsEnabled = true;
+            UpdateRestoreButton();
+        }
+    }
+
+    /// <summary>三个勾选框与后端的 kind 键。</summary>
+    private static readonly (string Key, string Label)[] KindLabels =
+    {
+        ("art", "超框"), ("cutin", "动画"), ("runfx", "特效"),
+    };
+
+    private List<string> SelectedKinds()
+    {
+        var kinds = new List<string>();
+        if (RestoreArtCheck.IsChecked == true) kinds.Add("art");
+        if (RestoreCutinCheck.IsChecked == true) kinds.Add("cutin");
+        if (RestoreRunfxCheck.IsChecked == true) kinds.Add("runfx");
+        return kinds;
+    }
+
+    private void RestoreKind_Changed(object sender, RoutedEventArgs e) => UpdateRestoreButton();
+
+    /// <summary>一类都没勾就不让点，避免弹出一个「会复原 0 张」的框。</summary>
+    private void UpdateRestoreButton() => RestoreButton.IsEnabled = SelectedKinds().Count > 0;
+
+    /// <summary>把各类有多少张写到勾选框上；0 张的直接置灰并取消勾选。</summary>
+    private void ApplyRestoreCounts(JsonElement pending)
+    {
+        foreach (var (check, key, label) in new[]
+                 {
+                     (RestoreArtCheck, "art", "超框卡图"),
+                     (RestoreCutinCheck, "cutin", "召唤动画"),
+                     (RestoreRunfxCheck, "runfx", "发动特效"),
+                 })
+        {
+            int n = Count(pending, "by_kind", key);
+            check.Content = $"{label}  {n} 张";
+            check.IsEnabled = n > 0;
+            check.IsChecked = n > 0;
+        }
+        UpdateRestoreButton();
+    }
+
+    /// <summary>三个勾选框上的数量。就是读一遍 journal，毫秒级。</summary>
+    private async Task LoadRestoreCountsAsync(EngineClient engine)
+    {
+        try
+        {
+            ApplyRestoreCounts(await engine.CallAsync("history.restore_all", new { preview = true }));
+        }
+        catch (Exception ex)
+        {
+            App.AddLog("WARN", "读取可复原数量失败：" + ex.Message);
         }
     }
 
@@ -984,7 +1039,7 @@ public sealed partial class SettingsPage : Page
         => Dialogs.ConfirmAsync(XamlRoot, title, body, primary, null, null, note);
 
     // --------------------------------------------------------------- 卡片数据
-    /// <summary>重建中：挡住重复点击，也避免和「一键复原」抢引擎线程。</summary>
+    /// <summary>重建中：挡住重复点击，也避免和「快捷复原」抢引擎线程。</summary>
     private bool _indexBusy;
 
     private async Task LoadIndexAsync()

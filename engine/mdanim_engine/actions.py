@@ -227,13 +227,14 @@ def _history_undo(ctx, ids):
 
 
 @register("history.restore_all")
-def _history_restore_all(ctx, preview=False):
-    """一键复原：把本工具写进游戏的改动一次撤完。
+def _history_restore_all(ctx, preview=False, kinds=None):
+    """快捷复原：把本工具写进游戏的改动撤掉，可按类只撤一部分。
 
-    preview 只数一遍（确认框要先告诉用户会撤多少），不碰游戏文件。
+    preview 只数一遍（三个勾选框的数量与确认框都靠它），不碰游戏文件。
+    kinds 是 {"art", "cutin", "runfx"} 的子集，不给等于三类全撤。
     """
     from mdstudio.ops.tx import restore_all, restore_pending
-    return restore_pending(ctx) if preview else restore_all(ctx)
+    return restore_pending(ctx, kinds=kinds) if preview else restore_all(ctx, kinds=kinds)
 
 
 @register("schemes.save")

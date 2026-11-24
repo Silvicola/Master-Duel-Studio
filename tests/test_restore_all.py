@@ -1,6 +1,6 @@
-"""一键复原：范围筛选、合并留痕、音效回滚。
+"""快捷复原：范围筛选、合并留痕、音效回滚。
 
-覆盖 2026-11-24 的改动：设置页把「重新同步」换成了「一键复原」。真正的撤销
+覆盖 2026-11-24 的改动：设置页把「重新同步」换成了「快捷复原」。真正的撤销
 仍走 `tx.undo`（已有 test_undo_safety / test_overwrite_flow 覆盖），这里只钉住
 新增的那层：撤哪些记录、怎么汇总、留几条痕。
 """
@@ -91,7 +91,8 @@ def test_pending_counts_four_kinds_and_skips_wallpaper():
     out = TX.restore_pending(FakeCtx(recs))
     assert out["total"] == 3
     assert out["cards"] == [10001, 22159, 22804]
-    assert out["by_kind"] == {"cutin": 1, "runfx": 1, "sound": 1, "art": 1}
+    # 音效并进特效：界面上只有三个勾选框（2026-11-24 定稿）
+    assert out["by_kind"] == {"cutin": 1, "runfx": 1, "art": 1}
     assert out["files"] == 2 + 5 + 1 + 1
 
 
@@ -152,3 +153,46 @@ def test_dry_run_does_not_roll_back_sound(captured, monkeypatch):
     monkeypatch.setattr(S, "apply_origins", lambda ctx, card: hit.append(card))
     TX.restore_all(FakeCtx([_rec("runfx.video", 22159, created=1)], dry_run=True))
     assert hit == []
+
+
+# --------------------------------------------------------------- 按类复原
+def test_kinds_filter_only_selected_family(captured):
+    """只勾超框：只有超框记录进 undo，动画与特效原样留着。"""
+    art = _rec("overframe.set", 100, modified=1)
+    cutin = _rec("cutin.video", 200, created=2)
+    fx = _rec("runfx.video", 300, created=3)
+    TX.restore_all(FakeCtx([art, cutin, fx]), kinds=["art"])
+    assert captured["records"] == [art]
+
+
+def test_unselected_records_are_kept(captured):
+    """没选中的必须当 keep 传进去，否则共享依赖会被当无主文件删掉。"""
+    art = _rec("overframe.set", 100, modified=1)
+    cutin = _rec("cutin.video", 200, created=2)
+    TX.restore_all(FakeCtx([art, cutin]), kinds=["art"])
+    assert captured["keep"] == [cutin]
+
+
+def test_sound_goes_with_effects(captured, monkeypatch):
+    """勾特效时，同一批卡换过的音效一起撤。"""
+    from mdstudio.ops import sound as S
+
+    monkeypatch.setattr(S, "apply_origins", lambda ctx, card: 0)
+    fx = _rec("runfx.video", 300, created=1)
+    snd = _rec("sound.set", 300, modified=1)
+    art = _rec("overframe.set", 100, modified=1)
+    TX.restore_all(FakeCtx([fx, snd, art]), kinds=["runfx"])
+    assert [r.op for r in captured["records"]] == ["runfx.video", "sound.set"]
+
+
+def test_all_kinds_together_keep_nothing(captured):
+    """三类全勾等于以前的快捷复原，keep 为空。"""
+    recs = [_rec("overframe.set", 100, modified=1), _rec("cutin.video", 200, created=1)]
+    TX.restore_all(FakeCtx(recs), kinds=["art", "cutin", "runfx"])
+    assert len(captured["records"]) == 2 and captured["keep"] == []
+
+
+def test_selected_kind_with_no_records_raises(captured):
+    """选了超框但这台机器没有超框改动：报「没有可撤的」，不要空跑。"""
+    with pytest.raises(MDStudioError):
+        TX.restore_all(FakeCtx([_rec("cutin.video", 200, created=1)]), kinds=["art"])

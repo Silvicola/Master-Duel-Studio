@@ -344,6 +344,13 @@ def undo(ctx, records, keep_records=()):
     # 资源还在、journal 还在，游戏却不播了。
     anim_cards = [r.card for r in records if family(r.op) not in ("runfx", "sound")]
     if anim_cards:
+        # 同一张卡还留着动画或超框的记录时不能回填：两个族共用 of_card_asset，
+        # 回填会把剩下那套的登记改回「借底图」，资源还在、游戏却不认了。
+        # 按类复原（只撤动画、超框还挂着）就是这种情形（2026-11-24）。
+        alive = {int(r.card) for r in keep_records
+                 if r.card and family_for(r.op) in ("cutin", "overframe")}
+        anim_cards = [c for c in anim_cards if int(c) not in alive]
+    if anim_cards:
         _restore_overframe_gate(ctx, anim_cards)
     for rel in sorted(doomed):
         ctx.delete(ctx.game.abs(rel))
@@ -554,15 +561,19 @@ def undo_ids(ctx, ids) -> list:
     return want
 
 
-# 一键复原覆盖的族。壁纸不在这里：它写的是 data.unity3d，复原要重写整个包，
+# 快捷复原覆盖的族。壁纸不在这里：它写的是 data.unity3d，复原要重写整个包，
 # 由壁纸页自己的「还原」处理（2026-11-24 用户定稿）。
 RESTORE_FAMILIES = ("cutin", "runfx", "sound", "overframe")
 
-_KIND_OF_FAMILY = {"overframe": "art"}
+# 界面上的三类勾选与族的对应关系。音效归在特效里：换过的音效本来就挂在特效上，
+# 单列一个勾选框没有意义（2026-11-24 用户定稿）。
+_KIND_OF_FAMILY = {"overframe": "art", "sound": "runfx"}
+_FAMILIES_OF_KIND = {"art": ("overframe",), "cutin": ("cutin",),
+                     "runfx": ("runfx", "sound")}
 
 
 def _restorable(ctx) -> list:
-    """一键复原要撤的那些记录：本工具写进游戏的改动，不含壁纸与只读留痕。
+    """快捷复原要撤的那些记录：本工具写进游戏的改动，不含壁纸与只读留痕。
 
     pack.install / wallpaper.set 这类 card=0 的记录天然被排除。
     """
@@ -575,39 +586,52 @@ def _restorable(ctx) -> list:
     return out
 
 
-def restore_pending(ctx) -> dict:
-    """一键复原会动哪些卡、多少文件。只读 journal，不碰游戏文件。
+def restore_pending(ctx, kinds=None) -> dict:
+    """快捷复原会动哪些卡、多少文件。只读 journal，不碰游戏文件。
 
-    确认框要先把数量摊给用户看，所以这条查询必须便宜且无副作用。
+    三个勾选框的数量与确认框都取自这里，所以这条查询必须便宜且无副作用。
+    kinds 不给就是三类全算。
     """
-    recs = _restorable(ctx)
-    return _restore_summary(recs)
+    return _restore_summary(_pick(_restorable(ctx), kinds)[0])
+
+
+def _pick(all_recs, kinds):
+    """按界面上那三个勾选框挑记录，返回 (要撤的, 不撤的)。
+
+    不撤的那批必须原样交回给 undo 当 keep_records：它靠这个判断「还有别的改动
+    在用这些文件」，传空列表会把共享依赖当无主文件删掉。
+    """
+    if not kinds:
+        return all_recs, []
+    fams = {f for k in kinds for f in _FAMILIES_OF_KIND.get(str(k), ())}
+    recs = [r for r in all_recs if family_for(r.op) in fams]
+    return recs, [r for r in all_recs if r not in recs]
 
 
 def _restore_summary(recs) -> dict:
     by_kind: dict = {}
     for r in recs:
-        k = _KIND_OF_FAMILY.get(family_for(r.op), family_for(r.op))
+        fam = family_for(r.op)
+        k = _KIND_OF_FAMILY.get(fam, fam)
         by_kind.setdefault(k, set()).add(int(r.card))
     cards = sorted({int(r.card) for r in recs})
     return {"cards": cards, "total": len(cards), "by_kind": {k: len(v) for k, v in by_kind.items()},
             "files": sum(len(r.modified) + len(r.created) for r in recs)}
 
 
-def restore_all(ctx) -> dict:
-    """一键复原：一次撤掉本工具留在游戏里的全部改动。
+def restore_all(ctx, kinds=None) -> dict:
+    """按类复原：撤掉本工具留在游戏里的改动，可选只撤某几类。
 
-    等价于挨张点「复原」，历史页也照常一张卡一行（2026-11-24 用户定稿：
-    不压成一条汇总）。顺序交给 undo：它按时间倒序处理，后叠上去的改动先撤，
-    同一张卡的链式改动不会串。
+    kinds 是 {"art", "cutin", "runfx"} 的子集，None 等于三类全撤。
+    历史页照常一张卡一行（2026-11-24 用户定稿：不压成一条汇总）。
     """
     ctx.guard()
-    recs = _restorable(ctx)
+    recs, keep = _pick(_restorable(ctx), kinds)
     if not recs:
         raise MDStudioError(tr("nothing to undo"))
     summary = _restore_summary(recs)
-    summary["kept"] = int(undo(ctx, recs, keep_records=[]) or 0)
-    # 音效标签回滚：逐卡复原特效时 runfx.remove 会补这一步，一键复原也要，
+    summary["kept"] = int(undo(ctx, recs, keep_records=keep) or 0)
+    # 音效标签回滚：逐卡复原特效时 runfx.remove 会补这一步，批量复原也要，
     # 否则「先把官方音效改成 X、再生成特效」的卡会停在 X 上。
     if not ctx.dry_run:
         from mdstudio.ops import sound as S
