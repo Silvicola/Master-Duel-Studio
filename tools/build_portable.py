@@ -351,6 +351,8 @@ if not no_zip:
 if not keep_dir and not no_zip and DIST.is_dir():
     shutil.rmtree(DIST, ignore_errors=True)
     if DIST.is_dir():
-        print(f"⚠ 解压目录没删干净（可能被杀软或沙箱占用），可手动删除：{DIST}")
+        # 这里不要用 ⚠ 之类的符号：cp936 控制台编码失败会让整个打包以 1 退出，
+        # 现象是「文件都写好了但脚本报失败」（2026-11-24 实测）。
+        print(f"[!] 解压目录没删干净（可能被杀软或沙箱占用），可手动删除：{DIST}")
     else:
         print("已删除解压目录（要保留请加 --keep-dir）")
