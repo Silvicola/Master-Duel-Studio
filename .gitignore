@@ -30,10 +30,16 @@ out/
 python/
 
 # ===================== 本机数据：游戏路径、账号、历史记录 =====================
-data/
-config/
+# 必须带前导斜杠，只挡根目录。不带斜杠会匹配任意层级，曾把程序自带的
+# core/mdstudio/data/spine_skeleton_shader.json.gz 一起挡掉，克隆出来跑视频
+# 生成直接报文件找不到（2026-11-24 发现）。
+/data/
+/config/
 settings.json
 journal.json
+
+# 程序自带资源，跟源码走，别被上面的规则误伤
+!core/mdstudio/data/
 
 # ===================== 模型与第三方大文件 =====================
 # 抠像模型 176MB，超过 GitHub 单文件上限
