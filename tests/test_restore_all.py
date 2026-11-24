@@ -196,3 +196,84 @@ def test_selected_kind_with_no_records_raises(captured):
     """选了超框但这台机器没有超框改动：报「没有可撤的」，不要空跑。"""
     with pytest.raises(MDStudioError):
         TX.restore_all(FakeCtx([_rec("cutin.video", 200, created=1)]), kinds=["art"])
+
+
+# ------------------------------------------------- 共用表：单卡复原也不能回填
+class _Gate:
+    entries: list = []
+
+    def remove(self, m):
+        return False
+
+    def remove_matching(self, items):
+        return []
+
+    def remove_card_entries(self, items):
+        return []
+
+    def append(self, items):
+        return None
+
+
+class _Cat:
+    def set(self, name, deps):
+        return None
+
+    def remove(self, name):
+        return None
+
+
+class _TxStub:
+    """只够 undo 空跑：撤的是单张卡、记录里没有文件改动。"""
+
+    def __init__(self, ctx, op, card, record=True, reverse=False):
+        self.cutin_gate = _Gate()
+        self.runfx_gate = _Gate()
+        self.catalog = _Cat()
+        self._writes = []
+
+        class _Rec:
+            meta = {}
+
+        self.rec = _Rec()
+
+    def commit(self):
+        return None
+
+
+def _undo_ctx(monkeypatch):
+    monkeypatch.setattr(TX, "Tx", _TxStub)
+    monkeypatch.setattr(TX, "drop_preview_cache", lambda *a, **k: None)
+    seen = []
+    monkeypatch.setattr(TX, "_restore_overframe_gate", lambda ctx, cards: seen.append(list(cards)))
+    return seen
+
+
+def test_single_restore_does_not_revert_gate_when_art_remains(monkeypatch):
+    """动画页单独复原一张卡，但它还挂着超框：of_card_asset 不能回填。
+    两个族共用这张表，回填会把超框的登记改回「借底图」。"""
+    seen = _undo_ctx(monkeypatch)
+    anim = _rec("cutin.video", 22804, modified=1)
+    art = _rec("overframe.set", 22804, modified=1)
+    TX.undo(FakeCtx([anim, art]), [anim], keep_records=[art])
+    assert seen == []
+
+
+def test_single_restore_reverts_gate_when_card_is_clean(monkeypatch):
+    """这张卡撤完就没别的改动了，按内置表回填才对。"""
+    seen = _undo_ctx(monkeypatch)
+    anim = _rec("cutin.video", 22804, modified=1)
+    TX.undo(FakeCtx([anim]), [anim], keep_records=[])
+    assert seen == [[22804]]
+
+
+def test_restore_art_keeps_gate_for_card_with_animation(monkeypatch):
+    """超框页单独复原，同一张卡的动画还在：同样不回填。"""
+    from mdstudio.ops import overframe as OF
+
+    seen = _undo_ctx(monkeypatch)
+    monkeypatch.setattr(OF, "clear_edit", lambda *a, **k: None)
+    anim = _rec("cutin.video", 22804, modified=1)
+    art = _rec("overframe.set", 22804, modified=1)
+    TX.undo(FakeCtx([anim, art]), [art], keep_records=[anim])
+    assert seen == []
