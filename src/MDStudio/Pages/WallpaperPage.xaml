@@ -12,8 +12,23 @@
         顶部 55 是动画页那排切换标签占掉的高度（8 边距 + 标签行 + 12 行距），
         固定成同一个数，切页时两块面板的顶边才不会上下跳。改这里要连卡图页、分享页一起改。
     -->
-    <Grid Padding="24,55,24,24">
+    <Grid Padding="24,55,24,24" RowSpacing="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!--  别的页面在写游戏文件时，两区的操作行一起禁用，这行说明原因  -->
+        <TextBlock
+            x:Name="MainBusyHint"
+            Grid.Row="0"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Style="{StaticResource CaptionTextBlockStyle}"
+            Text="有任务在运行，完成后再操作。"
+            Visibility="Collapsed" />
+
         <ScrollViewer
+            Grid.Row="1"
             HorizontalScrollBarVisibility="Disabled"
             VerticalScrollBarVisibility="Auto">
             <Grid
@@ -96,7 +111,10 @@
                                     Content="选择…" />
                             </Grid>
 
-                            <StackPanel Orientation="Horizontal" Spacing="8">
+                            <StackPanel
+                                x:Name="LobbyActions"
+                                Orientation="Horizontal"
+                                Spacing="8">
                                 <Button
                                     x:Name="LobbyApplyBtn"
                                     Click="LobbyApplyBtn_Click"
@@ -166,7 +184,10 @@
                                     Content="选择…" />
                             </Grid>
 
-                            <StackPanel Orientation="Horizontal" Spacing="8">
+                            <StackPanel
+                                x:Name="ShopActions"
+                                Orientation="Horizontal"
+                                Spacing="8">
                                 <Button
                                     x:Name="ShopApplyBtn"
                                     Click="ShopApplyBtn_Click"

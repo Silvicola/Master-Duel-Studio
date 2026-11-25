@@ -35,11 +35,42 @@ public sealed partial class WallpaperPage : Page
     {
         InitializeComponent();
         Loaded += WallpaperPage_Loaded;
+        // 离开页面就摘掉，免得切到别的页之后还在改不在这棵树上的控件
+        Unloaded += (_, _) => App.MainBusyChanged -= OnMainBusy;
         LobbyNowCanvas.SizeChanged += (_, _) => LayoutLobby();
         LobbyPickCanvas.SizeChanged += (_, _) => LayoutLobby();
     }
 
-    private async void WallpaperPage_Loaded(object sender, RoutedEventArgs e) => await RefreshAsync();
+    private async void WallpaperPage_Loaded(object sender, RoutedEventArgs e)
+    {
+        // 这个页用 Loaded 而不是 OnNavigatedTo，每次进页都会再触发一遍，先摘再挂
+        App.MainBusyChanged -= OnMainBusy;
+        App.MainBusyChanged += OnMainBusy;
+        ApplyMainBusy();
+        await RefreshAsync();
+    }
+
+    /// <summary>
+    /// 主任务槽被别的页面占着时锁住两区的操作行。本页自己写壁纸时由 SetLobbyBusy /
+    /// SetShopBusy 管按钮，这里再压一层不冲突。
+    /// WinUI 3 里只有 Control 才有 IsEnabled，Panel 没有，所以用「关掉命中测试 + 压暗」。
+    /// 这样不会覆盖还原按钮自己的可用状态（_lobbyReplaced / _shopReplaced）。
+    /// </summary>
+    private void ApplyMainBusy()
+    {
+        bool busy = App.MainBusy;
+        LobbyActions.IsHitTestVisible = !busy;
+        LobbyActions.Opacity = busy ? 0.5 : 1;
+        ShopActions.IsHitTestVisible = !busy;
+        ShopActions.Opacity = busy ? 0.5 : 1;
+        MainBusyHint.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>事件从引擎读循环那条线程发出来，必须转回界面线程再动控件。</summary>
+    private void OnMainBusy()
+    {
+        DispatcherQueue?.TryEnqueue(ApplyMainBusy);
+    }
 
     /// <summary>拉状态 + 大厅壁纸预览 + 6 张背景缩略图。</summary>
     private async Task RefreshAsync()

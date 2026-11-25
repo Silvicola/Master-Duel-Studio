@@ -103,6 +103,10 @@ public sealed partial class CardArtPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        // 页面被导航缓存留着，反复进页不能重复挂同一个处理
+        App.MainBusyChanged -= OnMainBusy;
+        App.MainBusyChanged += OnMainBusy;
+        ApplyMainBusy();
         if (App.Engine is null)
         {
             SetStatus("引擎没有启动：" + (App.EngineError ?? "未知原因"));
@@ -126,6 +130,12 @@ public sealed partial class CardArtPage : Page
             SetStatus("读超框登记表失败：" + ex.Message);
         }
         await SearchAsync("");
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        App.MainBusyChanged -= OnMainBusy;
     }
 
     private async Task RefreshGateAsync()
@@ -1129,6 +1139,28 @@ public sealed partial class CardArtPage : Page
     private void SetLocked(bool locked)
     {
         BusyOverlay.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 主任务槽被别的页面占着时锁住参数面板与刷新/复原。
+    /// 本页自己跑任务时整页有遮罩，这里跟着锁不冲突；左栏列表与搜索照常可用。
+    /// WinUI 3 里只有 Control 才有 IsEnabled，Panel 没有，所以用「关掉命中测试 + 压暗」
+    /// 表达禁用。这样也不会覆盖复原按钮自己的可用状态（_ours），解锁时不必猜该恢复成什么。
+    /// </summary>
+    private void ApplyMainBusy()
+    {
+        bool busy = App.MainBusy;
+        EditPane.IsHitTestVisible = !busy;
+        EditPane.Opacity = busy ? 0.5 : 1;
+        CardActions.IsHitTestVisible = !busy;
+        CardActions.Opacity = busy ? 0.5 : 1;
+        MainBusyHint.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>事件从引擎读循环那条线程发出来，必须转回界面线程再动控件。</summary>
+    private void OnMainBusy()
+    {
+        DispatcherQueue?.TryEnqueue(ApplyMainBusy);
     }
 
     /// <summary>遮罩上的取消。整页锁住之后别的都点不到了，这里留一个出口。</summary>

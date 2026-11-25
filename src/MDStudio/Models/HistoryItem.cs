@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using Microsoft.UI.Xaml;
@@ -10,6 +11,22 @@ public sealed class HistoryItem : INotifyPropertyChanged
 {
     /// <summary>时间，格式 YYYY-MM-DD HH:mm。</summary>
     public string Time { get; init; } = "";
+
+    /// <summary>行内只显示时分，日期交给分组头。</summary>
+    public string Clock { get; init; } = "";
+
+    /// <summary>用来切「最近三天」的窗口和按天分组。</summary>
+    public DateTime When { get; init; }
+
+    /// <summary>分组头（不是记录）：整行只显示一句日期标题。</summary>
+    public bool IsHeader { get; init; }
+    public string HeaderText { get; init; } = "";
+    public Visibility HeaderVisibility => IsHeader ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility RowVisibility => IsHeader ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>历史列表里插入的日期分隔行。</summary>
+    internal static HistoryItem MakeHeader(string text)
+        => new() { IsHeader = true, HeaderText = text };
 
     /// <summary>类别徽章文字：动画 / 特效 / 超框卡图 / 复原。</summary>
     public string Category { get; init; } = "";

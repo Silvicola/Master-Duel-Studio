@@ -28,10 +28,14 @@ public sealed partial class SharePage : Page
     // 自己有任务在跑才响应引擎进度广播（动画页同款守卫）。本页进页订阅出页退订，
     // 但用户停在本页时，别页任务（如设置页下载组件）的进度也会广播进来。
     private bool _jobActive;
+    // 顶栏说明句的空闲文案。锁定时换成「有任务在运行」，解锁要能换回来
+    private readonly string _idleHint;
+    private const string BusyHint = "有任务在运行，完成后再操作。";
 
     public SharePage()
     {
         InitializeComponent();
+        _idleHint = PageHint.Text;
         ExportList.ItemsSource = _exportable;
         InstalledList.ItemsSource = _installed;
 
@@ -43,6 +47,7 @@ public sealed partial class SharePage : Page
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        App.MainBusyChanged -= OnMainBusy;
         if (App.Engine is { } engine)
             engine.ProgressChanged -= OnEngineProgress;
     }
@@ -50,6 +55,9 @@ public sealed partial class SharePage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        App.MainBusyChanged -= OnMainBusy;
+        App.MainBusyChanged += OnMainBusy;
+        ApplyBusy();
         if (App.Engine is null)
         {
             await Dialogs.InfoAsync(XamlRoot, "引擎没有启动", App.EngineError ?? "未知原因", danger: true);
@@ -669,10 +677,7 @@ public sealed partial class SharePage : Page
     private void SetBusy(bool busy)
     {
         _jobActive = busy;   // 本页所有任务的唯一进出点，进度广播按它放行
-        ExportBtn.IsEnabled = !busy;
-        InstallBtn.IsEnabled = !busy;
-        PackBrowseBtn.IsEnabled = !busy;
-        ExportList.IsEnabled = !busy;
+        ApplyBusy();
         Progress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         Progress.IsIndeterminate = busy;
         if (!busy)
@@ -680,6 +685,28 @@ public sealed partial class SharePage : Page
             Progress.Value = 0;
             Progress.Maximum = 100;
         }
+    }
+
+    /// <summary>
+    /// 主任务槽被别的页面占着时把导出与安装一起禁用：导出会读到写了一半的登记表，
+    /// 安装则直接撞上「还有动作在跑」。本页自己跑任务时由 SetBusy 走同一条路。
+    /// 选择压缩包不锁，它只读本地文件。
+    /// </summary>
+    private void ApplyBusy()
+    {
+        bool busy = _jobActive || App.MainBusy;
+        ExportBtn.IsEnabled = !busy;
+        InstallBtn.IsEnabled = !busy;
+        PackBrowseBtn.IsEnabled = !busy;
+        ExportList.IsEnabled = !busy;
+        // 本页自己在跑的时候顶栏已经有进度条和状态行，别把说明换成锁的话
+        PageHint.Text = App.MainBusy && !_jobActive ? BusyHint : _idleHint;
+    }
+
+    /// <summary>事件从引擎读循环那条线程发出来，必须转回界面线程再动控件。</summary>
+    private void OnMainBusy()
+    {
+        DispatcherQueue?.TryEnqueue(ApplyBusy);
     }
 
     // --------------------------------------------------------------- 引擎事件

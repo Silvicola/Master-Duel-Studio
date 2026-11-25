@@ -1189,6 +1189,18 @@ class Backend:
                 "archived": archived,
             })
 
+        def _kind_of(op: str) -> str:
+            """op → 界面上那三类。pack.* 的族在第二段，其余在第一段。"""
+            a, _, b = str(op).partition(".")
+            fam = b if a == "pack" else a
+            if fam in ("overframe", "art"):
+                return "art"
+            if fam == "cutin":
+                return "cutin"
+            if fam in ("runfx", "sound"):
+                return "runfx"
+            return ""
+
         for r in ctx.journal.load():
             # 恢复原版后的安装摘要已标记 reverted：明细全撤完了，它不再算
             # "当前生效的改动"，历史页不该再显示（记录留着给分享页看）。
@@ -1233,6 +1245,26 @@ class Backend:
                             "files": r.meta.get("files") or 0}
                     emit(f"archived-{r.id}", ops[-1], r.card,
                          r.time - 1, show, archived=True)
+            # 旧留痕里一张卡撤了两族（超框 + 特效）只写了一条 undo，kind 只能填一个，
+            # 另一族的复原行在历史页看不到。按 ops 补出缺的那几条复原行；文件数只算在
+            # 第一条上，其余留空（前端 files 为 0 时右侧不显示）。
+            # 新记录本身一卡一族，拆出来只有一项，走下面的原路。
+            if r.op == "undo":
+                fams = []
+                for op in r.meta.get("ops") or []:
+                    f = _kind_of(op)
+                    if f and f not in fams:
+                        fams.append(f)
+                if len(fams) > 1:
+                    for i, f in enumerate(fams):
+                        m = dict(r.meta)
+                        m["kind"] = f
+                        # 文件数只算一次，落在倒序后最上面那条（同一次复原是一批，
+                        # 摊到每条上会重复计数）
+                        if i < len(fams) - 1:
+                            m.pop("files", None)
+                        emit(f"{r.id}-{f}", "undo", r.card, r.time, m)
+                    continue
             emit(r.id, r.op, r.card, r.time, r.meta)
         # 一次操作一行，不合并。同卡同族的多条记录只可能来自「已复原的历史」，
         # 它们各是一次独立的操作；折叠会把「已被撤销的」和「当前生效的」揉进一行
@@ -1241,6 +1273,28 @@ class Backend:
         for row in recs:
             row.pop("_time", None)
         return {"records": recs, "count": len(recs)}
+
+    # ------------------------------------------------------- 快捷复原的清单
+    def history_restore_preview(self, picks=None) -> dict:
+        """勾选列表要的那些行：只读 journal，不碰游戏文件。
+
+        以前这一支挂在 history.restore_all（ACTIONS）下面，设置页每次读清单都会
+        占住主任务槽：按钮被 OnMainBusy 灰一下再亮，其他页的写区跟着压暗，切页
+        的时候生成按钮还会被挤成 Busy（2026-11-25 用户实测「快捷复原」闪三次）。
+        清单是查，放 QUERY 里主进程直答。
+        """
+        from mdstudio.ops.tx import restore_pending
+
+        ctx = self._ctx()
+        data = restore_pending(ctx, picks=picks)
+        # 勾选列表上要写卡名，前端没有卡库，这里补上
+        try:
+            db = self._names(ctx)
+            for it in data.get("items") or []:
+                it["name"] = db.name(int(it["card"])) or ""
+        except Exception:
+            pass
+        return data
 
     # ------------------------------------------------------------------ 音效
     def sound_slots(self) -> dict:
@@ -1774,6 +1828,10 @@ QUERY = {
     "pack.installed": lambda be, **kw: be.pack_installed(),
     "pack.inspect": lambda be, pack_path, **kw: be.pack_inspect(pack_path),
     "history.list": lambda be, **kw: be.history_list(),
+    # 快捷复原的勾选清单：只读 journal，放这里主进程直答。挂在 history.restore_all
+    # （ACTIONS）下面时，读一次清单就占住主任务槽，设置页按钮会灰一下再亮。
+    "history.restore_preview": lambda be, picks=None, **kw:
+        be.history_restore_preview(picks),
     "sound.slots": lambda be, **kw: be.sound_slots(),
     # 预设列表跟 sound.slots 一样是纯只读查询。走 ACTIONS 会在生成特效期间
     # 被挤成 Busy, 弹窗里就一条预设都不显示。时长已经缓存, 直答约 3ms。

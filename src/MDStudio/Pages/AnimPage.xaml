@@ -456,6 +456,17 @@
                             Spacing="12"
                             Visibility="Collapsed">
                             <!--
+                                别的页面在写游戏文件时整栏禁用，这行说明为什么。
+                                本页自己跑任务时整页有遮罩，这行会被盖住，所以只跟主任务槽走。
+                            -->
+                            <TextBlock
+                                x:Name="MainBusyHint"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="有任务在运行，完成后再操作。"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
+                            <!--
                                 卡名 + 卡号在左，刷新 / 复原在右，两个模式共用这一行。
                                 以前这两个按钮放在内容流里（来源卡面板之后），三种卡状态的面板
                                 高度不同，按钮就跟着上下漂；特效页还各自复制了一枚「复原」。

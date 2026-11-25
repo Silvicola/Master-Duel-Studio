@@ -94,6 +94,23 @@ def test_old_single_archive_backfills_missing_ops():
     assert [x["op"] for x in arch] == ["runfx.video"]
 
 
+def test_old_undo_splits_one_row_per_kind():
+    """旧留痕一卡同时撤了超框与特效：复原行要拆成两条，各带自己的类别。
+
+    以前按卡号只写一条，kind 只能填一个，另一族的复原行在历史页直接消失
+    （2026-11-25 用户实测：22770 复原后只剩「复原超框卡图」）。
+    """
+    r = _undo(card=22770, ops=("overframe.set", "runfx.video"))
+    r.meta["kind"] = "art"
+    r.meta["files"] = 3
+    out = _backend([r]).history_list()["records"]
+    undo = [x for x in out if x["op"] == "undo"]
+    # 新的在前：特效那条排在上面，文件数也只算在它头上
+    assert [x["detail"]["kind"] for x in undo] == ["runfx", "art"]
+    assert [x["detail"].get("files") for x in undo] == [3, None]
+    assert len({x["id"] for x in out}) == len(out)
+
+
 def _rec(op, card=22159, t=900.0, files=1, meta=None):
     r = Record(op, card)
     r.time = t
@@ -110,20 +127,23 @@ def test_summaries_keep_each_op_but_drop_sound():
         _rec("runfx.video", t=100.0, files=1, meta={"donor": 3880}),
         _rec("sound.custom", t=200.0, files=1, meta={"label": "SE_EV_CUSTOM22159"}),
     ])
-    c = out[22159]
+    c = out[(22159, "runfx")]
     assert [a["op"] for a in c["archived"]] == ["runfx.video"]
     assert c["files"] == 2 and c["kind"] == "runfx"
     assert c["ops"] == ["runfx.video", "sound.custom"]
 
 
-def test_summaries_keep_two_distinct_ops():
-    """同卡两种改动（动画 + 超框）各留一条，按时间排。"""
+def test_summaries_split_by_kind():
+    """同卡两种改动（动画 + 超框）拆成两条复原记录，各自带自己的类别。"""
     from mdstudio.ops.tx import undo_summaries
 
     out = undo_summaries([
         _rec("overframe.set", t=300.0),
         _rec("cutin.video", t=200.0, meta={"sha": {"a": 1, "b": 2}}),
     ])
-    c = out[22159]
-    assert [a["op"] for a in c["archived"]] == ["cutin.video", "overframe.set"]
-    assert c["archived"][0]["meta"]["files"] == 2   # 有 sha 时按 sha 计数
+    assert set(out) == {(22159, "art"), (22159, "cutin")}
+    art, cutin = out[(22159, "art")], out[(22159, "cutin")]
+    assert [a["op"] for a in art["archived"]] == ["overframe.set"]
+    assert [a["op"] for a in cutin["archived"]] == ["cutin.video"]
+    assert cutin["archived"][0]["meta"]["files"] == 2   # 有 sha 时按 sha 计数
+    assert art["kind"] == "art" and cutin["kind"] == "cutin"

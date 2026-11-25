@@ -141,6 +141,7 @@
                 </ContentControl>
 
                 <ContentControl
+                    x:Name="IndexCard"
                     Grid.Column="1"
                     Padding="20"
                     Style="{StaticResource PanelCard}">
@@ -326,10 +327,10 @@
                     <ColumnDefinition Width="1*" MinWidth="300" />
                 </Grid.ColumnDefinitions>
 
-                <!--  两张卡各按内容高度，不互相拉平：维护那边文案长，拉平会把左边撑出一大片空白  -->
+                <!--  两卡拉平到同一高度：行高由内容多的那张决定，矮的一张补白，内容各自顶对齐  -->
                 <ContentControl
                     Padding="20"
-                    VerticalAlignment="Top"
+                    VerticalContentAlignment="Top"
                     Style="{StaticResource PanelCard}">
                     <StackPanel Spacing="12">
                         <StackPanel Orientation="Horizontal" Spacing="10">
@@ -363,7 +364,7 @@
                 <ContentControl
                     Grid.Column="1"
                     Padding="20"
-                    VerticalAlignment="Top"
+                    VerticalContentAlignment="Top"
                     Style="{StaticResource PanelCard}">
                     <StackPanel Spacing="12">
                         <StackPanel Orientation="Horizontal" Spacing="10">
@@ -373,11 +374,10 @@
                             <TextBlock Style="{StaticResource GroupTitle}" Text="维护" />
                         </StackPanel>
                         <StackPanel Spacing="4">
-                            <TextBlock Style="{StaticResource BodyTextBlockStyle}" Text="游戏更新前先复原" />
                             <TextBlock
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 Style="{StaticResource CaptionTextBlockStyle}"
-                                Text="可先导出整合包，然后点「快捷复原」，最后前往「Steam → Yu-Gi-Oh! Master Duel → 属性 → 已安装文件 → 验证游戏文件完整性」。等游戏更新后再导入整合包即可。"
+                                Text="游戏更新前可先导出整合包，再点「快捷复原」，最后前往「Steam → Yu-Gi-Oh! Master Duel → 属性 → 已安装文件 → 验证游戏文件完整性」。更新后再导入整合包即可。"
                                 TextWrapping="Wrap" />
                             <TextBlock
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -510,6 +510,7 @@
                                             ToolTipService.ToolTip="供软件内预览用的帧图，几十 MB。复原或手动清理后，这张卡的播放入口会一起消失，重新生成才有。" />
                                     </StackPanel>
                                     <StackPanel
+                                        x:Name="PreviewCacheActions"
                                         Grid.Column="1"
                                         VerticalAlignment="Center"
                                         Orientation="Horizontal"

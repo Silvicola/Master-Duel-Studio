@@ -359,6 +359,10 @@ public sealed partial class AnimPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        // 页面被导航缓存留着，反复进页不能重复挂同一个处理
+        App.MainBusyChanged -= OnMainBusy;
+        App.MainBusyChanged += OnMainBusy;
+        ApplyMainBusy();
         if (App.Engine is null)
         {
             ShowFatal("引擎没有启动：" + (App.EngineError ?? "未知原因"));
@@ -373,6 +377,12 @@ public sealed partial class AnimPage : Page
         // 这里的列表快照（分类标签、复原按钮状态）会过期。cards.status 是轻查询，
         // 切页重算一次换状态永远新鲜，值得。
         await ReloadAsync();
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        App.MainBusyChanged -= OnMainBusy;
     }
 
     // ------------------------------------------------------------- 数据加载
@@ -3062,6 +3072,27 @@ public sealed partial class AnimPage : Page
     private void SetLocked(bool locked)
     {
         BusyOverlay.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 主任务槽被别的页面占着时锁住右栏。
+    /// 本页自己跑任务时整页有遮罩，这里跟着锁不冲突；左侧列表、搜索、页签照常可用。
+    /// WinUI 3 里只有 Control 才有 IsEnabled，Panel 没有，所以整栏用「关掉命中测试 +
+    /// 压暗」表达禁用。这样也不会碰到按钮各自的可用状态（HasOurs、_donorLocked），
+    /// 解锁时不必猜该恢复成什么。
+    /// </summary>
+    private void ApplyMainBusy()
+    {
+        bool busy = App.MainBusy;
+        DetailPanel.IsHitTestVisible = !busy;
+        DetailPanel.Opacity = busy ? 0.5 : 1;
+        MainBusyHint.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>事件从引擎读循环那条线程发出来，必须转回界面线程再动控件。</summary>
+    private void OnMainBusy()
+    {
+        DispatcherQueue?.TryEnqueue(ApplyMainBusy);
     }
 
     private void SetRunning(bool running, string area = "cutin")

@@ -232,6 +232,9 @@ def _history_restore_all(ctx, preview=False, picks=None):
 
     preview 只数一遍（勾选列表就用它的结果），不碰游戏文件。
     picks 是 [{"card", "kind"}]，不给等于全部。
+
+    界面读清单已经改走 history.restore_preview（QUERY，不占主任务槽）；
+    这里保留 preview 只为兼容命令行，新代码不要再从动作里查。
     """
     from mdstudio.ops.tx import restore_all, restore_pending
     data = restore_pending(ctx, picks=picks) if preview else restore_all(ctx, picks=picks)

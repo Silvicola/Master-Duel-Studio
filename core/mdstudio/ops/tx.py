@@ -383,7 +383,10 @@ def undo(ctx, records, keep_records=()):
         # 展开成一条照常显示的改动。journal 本身仍只存「当前生效」，导出清单和
         # 安装闸门不受影响（2026-11-17 用户实测：整合包导入后复原，原记录消失）。
         per_card = undo_summaries(records)
-        for card, c in sorted(per_card.items()):
+        # 一张卡撤了两族（超框 + 特效）就写两条复原记录，各带自己的类别。
+        # 以前按卡号聚合，kind 只留先遇到的那一族，另一族的复原行在历史页直接消失
+        # （2026-11-25 用户实测：22770 复原后只剩「复原超框卡图」）。
+        for (card, _fam), c in sorted(per_card.items(), key=lambda kv: kv[0]):
             rec = Record("undo", card)
             rec.meta = {"kind": c["kind"], "files": c["files"], "ops": c["ops"],
                         "archived": c["archived"], "noop": True}
@@ -492,13 +495,15 @@ def family(op: str) -> str:
 
 
 def undo_summaries(records) -> dict:
-    """复原留痕的展示摘要：{卡号: {"kind", "files", "ops", "archived": [...]}}。
+    """复原留痕的展示摘要：{(卡号, 类别): {"kind", "files", "ops", "archived": [...]}}。
 
+    一张卡按类别拆开：超框与特效被一起撤时各留一条复原记录，否则其中一族的
+    复原行会在历史页丢掉（kind 只能填一个）。
     `archived` 是复原前那些改动的回放，历史页会把它们照常展开（不可再撤）。
     每种 op 各留一条，同一种反复做只留最新那条。
 
     音效不进 `archived`：它只是特效的配套改动，单独成行会把「生成特效」挤下去
-    （2026-11-23 用户定稿）。文件数照算在复原行里。
+    （2026-11-23 用户定稿）。文件数照算在复原记录里。
     """
     per_card: dict = {}
     for r in records:
@@ -512,7 +517,8 @@ def undo_summaries(records) -> dict:
             fam = "art"
         if fam not in ("cutin", "runfx", "art"):
             continue
-        c = per_card.setdefault(r.card, {"kind": fam, "files": 0, "ops": [], "archived": []})
+        c = per_card.setdefault((r.card, fam),
+                                {"kind": fam, "files": 0, "ops": [], "archived": []})
         c["files"] += len(r.modified) + len(r.created)
         c["ops"].append(r.op)
         if is_sound:

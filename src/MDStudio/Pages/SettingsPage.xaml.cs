@@ -115,6 +115,16 @@ public sealed partial class SettingsPage : Page
             // 但界面会让人以为两块同时在动，而且复原删的文件可能正是那次生成刚写进去的
             // （2026-11-25 用户提出）。这里跟着主任务槽一起锁。
             RestoreButton.IsEnabled = !busy;
+            // 重建索引走主任务槽，点了只会撞上「还有动作在跑」；清理预览缓存会删掉
+            // 生成中途要写的帧图，可能把正在出的那张卡弄成半截；预演开关同低清兼容，
+            // 改了只影响下一次，容易让人以为对当前这次生效。
+            // 前两项各自还有自己的可用状态（重建中、读取中），所以整块关掉命中测试，
+            // 不逐按钮赋值，免得解锁时把它们的判断覆盖掉。
+            IndexCard.IsHitTestVisible = !busy;
+            IndexCard.Opacity = busy ? 0.5 : 1;
+            PreviewCacheActions.IsHitTestVisible = !busy;
+            PreviewCacheActions.Opacity = busy ? 0.5 : 1;
+            DrySwitch.IsEnabled = !busy;
             if (busy)
                 GameHint.Text = BusyHint;
             else if (GameHint.Text == BusyHint)
@@ -898,7 +908,7 @@ public sealed partial class SettingsPage : Page
         try
         {
             var items = ParseRestoreItems(
-                await engine.CallAsync("history.restore_all", new { preview = true }));
+                await engine.CallAsync("history.restore_preview"));
             if (items.Count == 0)
             {
                 await InfoAsync("没有可复原的改动",
@@ -920,16 +930,13 @@ public sealed partial class SettingsPage : Page
             RestoreRing.Visibility = Visibility.Visible;
             RestoreStatus.Text = App.DryRun ? "复原中（预演）…" : "复原中…";
 
-            var r = await engine.CallAsync("history.restore_all", new { picks });
-            RestoreRing.Visibility = Visibility.Collapsed;
-            int done = Count(r, "total");
-            int files = Count(r, "files");
-            RestoreStatus.Text = App.DryRun
-                ? "预演结束，没有写游戏文件"
-                : $"已复原 {done} 张卡，还原 {files} 个文件";
+            await engine.CallAsync("history.restore_all", new { picks });
+            // 复原完不在卡片上留「复原了几张、还原了几个文件」：这份账归历史页，
+            // 卡片收起来就回到「还有没有可复原的改动」，界面状态和实际一致。
+            RestoreBusy.Visibility = Visibility.Collapsed;
 
             await InfoAsync(App.DryRun ? "预演完成" : "复原完成",
-                App.DryRun ? "流程跑通了，没有写游戏文件。" : $"{done} 张卡已回到改动前的样子。",
+                App.DryRun ? "流程跑通了，没有写游戏文件。" : "选中的改动已回到改动前的样子。",
                 note: "准备更新游戏的话，去 Steam 验证一次文件完整性；更新完再装回整合包。");
             await LoadAsync();
         }
@@ -996,7 +1003,7 @@ public sealed partial class SettingsPage : Page
         try
         {
             ApplyRestoreSummary(ParseRestoreItems(
-                await engine.CallAsync("history.restore_all", new { preview = true })));
+                await engine.CallAsync("history.restore_preview")));
         }
         catch (Exception ex)
         {

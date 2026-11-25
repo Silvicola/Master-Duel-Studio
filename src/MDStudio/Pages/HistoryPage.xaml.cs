@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using MDStudio.Models;
 using Microsoft.UI.Xaml;
@@ -60,6 +62,12 @@ public sealed partial class HistoryPage : Page
     private static HistoryItem? Parse(JsonElement r)
     {
         string op = Text(r, "op");
+        // 日期进分组头，行内只留时分。解析失败就退回原文，不至于让这条记录消失
+        string timeText = Text(r, "time");
+        var when = DateTime.TryParseExact(timeText, "yyyy-MM-dd HH:mm",
+            CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+            ? parsed : DateTime.MinValue;
+        string clock = when == DateTime.MinValue ? timeText : when.ToString("HH:mm");
         var (category, filter, opText) = Classify(op);
         if (category.Length == 0) return null;   // 三类与复原之外的记录，这页不显示
 
@@ -105,7 +113,9 @@ public sealed partial class HistoryPage : Page
 
         return new HistoryItem
         {
-            Time = Text(r, "time"),
+            Time = timeText,
+            Clock = clock,
+            When = when,
             Category = category,
             Filter = filter,
             Method = method,
@@ -174,21 +184,43 @@ public sealed partial class HistoryPage : Page
         return new SolidColorBrush(Microsoft.UI.Colors.Gray);
     }
 
+    /// <summary>这一页只看最近三天（今天、昨天、前天）。更早的记录还在 journal 里，
+    /// 只是不进列表，页脚有一句说明。</summary>
+    private const int WindowDays = 3;
+
     private void ApplyFilter()
     {
         var tag = _filter;
+        var since = DateTime.Today.AddDays(-(WindowDays - 1));
+        var recent = _all.Where(x => x.When >= since).ToList();
+        // 复原条目跟被撤销的类别走：筛选「动画」时也能看到那次复原
+        var rows = tag == "all" ? recent : recent.Where(x => x.Filter == tag).ToList();
+
         _shown.Clear();
-        foreach (var item in _all)
+        // 按天分组：日期一变就插一条分隔行。组头本身不是记录，不计入条数
+        foreach (var g in rows.GroupBy(x => x.When.Date))
         {
-            // 复原条目跟被撤销的类别走：筛选「动画」时也能看到那次复原
-            if (tag == "all" || item.Filter == tag)
-                _shown.Add(item);
+            _shown.Add(HistoryItem.MakeHeader($"{DayLabel(g.Key)} · {g.Count()} 条"));
+            foreach (var item in g) _shown.Add(item);
         }
+
         CountText.Text = tag == "all"
-            ? $"共 {_all.Count} 条"
-            : $"共 {_shown.Count} / {_all.Count} 条";
-        EmptyHint.Visibility = _shown.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        HistoryList.Visibility = _shown.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            ? $"近三天 {rows.Count} 条"
+            : $"近三天 {rows.Count} / {recent.Count} 条";
+        // 三种空：从没做过、三天内没有、这一类三天内没有。混成一句会误导
+        EmptyHint.Text = _all.Count == 0 ? "还没有改动记录"
+            : recent.Count == 0 ? "最近三天没有改动"
+            : "这一类最近三天没有记录";
+        EmptyHint.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        HistoryList.Visibility = rows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private static string DayLabel(DateTime day)
+    {
+        var today = DateTime.Today;
+        if (day == today) return "今天";
+        if (day == today.AddDays(-1)) return "昨天";
+        return $"{day.Month}月{day.Day}日";
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await LoadAsync();

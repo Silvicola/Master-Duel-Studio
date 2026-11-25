@@ -96,6 +96,7 @@
         </Grid.RowDefinitions>
 
         <TextBlock
+            x:Name="PageHint"
             Grid.Row="0"
             Margin="0,0,0,10"
             VerticalAlignment="Bottom"

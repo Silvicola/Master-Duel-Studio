@@ -331,6 +331,7 @@
                         </TextBox>
                     </StackPanel>
                     <StackPanel
+                        x:Name="CardActions"
                         Grid.Column="1"
                         VerticalAlignment="Center"
                         Orientation="Horizontal"
@@ -351,6 +352,18 @@
                     </StackPanel>
                 </Grid>
 
+                <!--
+                    别的页面在写游戏文件时，参数面板与刷新/复原一起禁用，这行说明原因。
+                    本页自己跑任务时整页有遮罩，这行会被盖住，所以只跟主任务槽走。
+                -->
+                <TextBlock
+                    x:Name="MainBusyHint"
+                    Grid.Row="1"
+                    Margin="0,6,0,0"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Text="有任务在运行，完成后再操作。"
+                    Visibility="Collapsed" />
 
                 <!--  超框工作台：预览 + 参数，限一个最大宽度，窄窗口下按比例收缩  -->
                 <Grid x:Name="OverframeSection" Grid.Row="2">
